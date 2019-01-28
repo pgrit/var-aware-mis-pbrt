@@ -40,6 +40,7 @@
 #include "progressreporter.h"
 #include "sampler.h"
 #include "stats.h"
+#include "imageio.h"
 
 namespace pbrt {
 
@@ -228,7 +229,10 @@ Spectrum G(const Scene &scene, Sampler &sampler, const Vertex &v0,
 Float MISWeight(const Scene &scene, Vertex *lightVertices,
                 Vertex *cameraVertices, Vertex &sampled, int s, int t,
                 const Distribution1D &lightPdf,
-                const std::unordered_map<const Light *, size_t> &lightToIndex) {
+                const std::unordered_map<const Light *, size_t> &lightToIndex,
+                const Point2i &pxCoords, // for Stratification-Aware MIS
+                const SAMISRectifier *rectifier = nullptr // for Stratification-Aware MIS
+                ) {
     if (s + t == 2) return 1;
     Float sumRi = 0;
     // Define helper function _remap0_ that deals with Dirac delta functions
@@ -279,7 +283,8 @@ Float MISWeight(const Scene &scene, Vertex *lightVertices,
         ri *=
             remap0(cameraVertices[i].pdfRev) / remap0(cameraVertices[i].pdfFwd);
         if (!cameraVertices[i].delta && !cameraVertices[i - 1].delta)
-            sumRi += ri;
+            sumRi += ri
+                  * (rectifier ? rectifier->Get(pxCoords, s+t, i) : 1.0f); // for Stratification-Aware MIS
     }
 
     // Consider hypothetical connection strategies along the light subpath
@@ -288,9 +293,15 @@ Float MISWeight(const Scene &scene, Vertex *lightVertices,
         ri *= remap0(lightVertices[i].pdfRev) / remap0(lightVertices[i].pdfFwd);
         bool deltaLightvertex = i > 0 ? lightVertices[i - 1].delta
                                       : lightVertices[0].IsDeltaLight();
-        if (!lightVertices[i].delta && !deltaLightvertex) sumRi += ri;
+        if (!lightVertices[i].delta && !deltaLightvertex)
+            sumRi += ri
+                  * (rectifier ? rectifier->Get(pxCoords, s+t, s+t-i) : 1.0f); // for Stratification-Aware MIS
     }
-    return 1 / (1 + sumRi);
+
+    Float stratFactorCurTech = (rectifier ? rectifier->Get(pxCoords, s+t, t) : 1.0f); // for Stratification-Aware MIS
+    return 1 / (1 + sumRi
+                    / stratFactorCurTech // for Stratification-Aware MIS
+                );
 }
 
 // BDPT Method Definitions
@@ -318,7 +329,6 @@ void BDPTIntegrator::Render(const Scene &scene) {
     const int tileSize = 16;
     const int nXTiles = (sampleExtent.x + tileSize - 1) / tileSize;
     const int nYTiles = (sampleExtent.y + tileSize - 1) / tileSize;
-    ProgressReporter reporter(nXTiles * nYTiles, "Rendering");
 
     // Allocate buffers for debug visualization
     const int bufferCount = (1 + maxDepth) * (6 + maxDepth) / 2;
@@ -341,104 +351,168 @@ void BDPTIntegrator::Render(const Scene &scene) {
         }
     }
 
-    // Render and write the output image to disk
-    if (scene.lights.size() > 0) {
-        ParallelFor2D([&](const Point2i tile) {
-            // Render a single tile using BDPT
-            MemoryArena arena;
-            int seed = tile.y * nXTiles + tile.x;
-            std::unique_ptr<Sampler> tileSampler = sampler->Clone(seed);
-            int x0 = sampleBounds.pMin.x + tile.x * tileSize;
-            int x1 = std::min(x0 + tileSize, sampleBounds.pMax.x);
-            int y0 = sampleBounds.pMin.y + tile.y * tileSize;
-            int y1 = std::min(y0 + tileSize, sampleBounds.pMax.y);
-            Bounds2i tileBounds(Point2i(x0, y0), Point2i(x1, y1));
-            LOG(INFO) << "Starting image tile " << tileBounds;
+    // Buffers to store the full images of each iteration.
+    // Used to re-weight and combine the prepass with the following iterations.
+    std::vector<std::vector<Float>> frameBuffers;
+    std::vector<std::vector<Float>> weightFrameBuffers;
 
-            std::unique_ptr<FilmTile> filmTile =
-                camera->film->GetFilmTile(tileBounds);
-            for (Point2i pPixel : tileBounds) {
-                tileSampler->StartPixel(pPixel);
-                if (!InsideExclusive(pPixel, pixelBounds))
-                    continue;
-                do {
-                    // Generate a single sample using BDPT
-                    Point2f pFilm = (Point2f)pPixel + tileSampler->Get2D();
+    // For Stratification-Aware MIS: the render loop is separated into two iterations.
+    // The first uses the balance heuristic and estimates the stratification factors.
+    // The resulting images are averaged, except for those pixels where the stratification factors are very large.
+    // To minimize change to the exisiting code base, the render loop is encapuslated in a lambda function.
+    SAMISRectifier rectifier(film, 3, 3, 8); // TODO make parameters configurable
+    auto renderIterFn = [&](int sampleCount, int sampleOffset, const std::string &iterName,
+                            bool estimateVariances, bool rectify) {
+        ProgressReporter reporter(nXTiles * nYTiles, iterName);
 
-                    // Trace the camera subpath
-                    Vertex *cameraVertices = arena.Alloc<Vertex>(maxDepth + 2);
-                    Vertex *lightVertices = arena.Alloc<Vertex>(maxDepth + 1);
-                    int nCamera = GenerateCameraSubpath(
-                        scene, *tileSampler, arena, maxDepth + 2, *camera,
-                        pFilm, cameraVertices);
-                    // Get a distribution for sampling the light at the
-                    // start of the light subpath. Because the light path
-                    // follows multiple bounces, basing the sampling
-                    // distribution on any of the vertices of the camera
-                    // path is unlikely to be a good strategy. We use the
-                    // PowerLightDistribution by default here, which
-                    // doesn't use the point passed to it.
-                    const Distribution1D *lightDistr =
-                        lightDistribution->Lookup(cameraVertices[0].p());
-                    // Now trace the light subpath
-                    int nLight = GenerateLightSubpath(
-                        scene, *tileSampler, arena, maxDepth + 1,
-                        cameraVertices[0].time(), *lightDistr, lightToIndex,
-                        lightVertices);
+        if (scene.lights.size() > 0) {
+            ParallelFor2D([&](const Point2i tile) {
+                // Render a single tile using BDPT
+                MemoryArena arena;
+                int seed = tile.y * nXTiles + tile.x;
+                std::unique_ptr<Sampler> tileSampler = sampler->Clone(seed);
+                int x0 = sampleBounds.pMin.x + tile.x * tileSize;
+                int x1 = std::min(x0 + tileSize, sampleBounds.pMax.x);
+                int y0 = sampleBounds.pMin.y + tile.y * tileSize;
+                int y1 = std::min(y0 + tileSize, sampleBounds.pMax.y);
+                Bounds2i tileBounds(Point2i(x0, y0), Point2i(x1, y1));
+                LOG(INFO) << "Starting image tile " << tileBounds;
 
-                    // Execute all BDPT connection strategies
-                    Spectrum L(0.f);
-                    for (int t = 1; t <= nCamera; ++t) {
-                        for (int s = 0; s <= nLight; ++s) {
-                            int depth = t + s - 2;
-                            if ((s == 1 && t == 1) || depth < 0 ||
-                                depth > maxDepth)
-                                continue;
-                            // Execute the $(s, t)$ connection strategy and
-                            // update _L_
-                            Point2f pFilmNew = pFilm;
-                            Float misWeight = 0.f;
-                            Spectrum Lpath = ConnectBDPT(
-                                scene, lightVertices, cameraVertices, s, t,
-                                *lightDistr, lightToIndex, *camera, *tileSampler,
-                                &pFilmNew, &misWeight);
-                            VLOG(2) << "Connect bdpt s: " << s <<", t: " << t <<
-                                ", Lpath: " << Lpath << ", misWeight: " << misWeight;
-                            if (visualizeStrategies || visualizeWeights) {
-                                Spectrum value;
-                                if (visualizeStrategies)
-                                    value =
-                                        misWeight == 0 ? 0 : Lpath / misWeight;
-                                if (visualizeWeights) value = Lpath;
-                                weightFilms[BufferIndex(s, t)]->AddSplat(
-                                    pFilmNew, value);
+                std::unique_ptr<FilmTile> filmTile =
+                    camera->film->GetFilmTile(tileBounds);
+                for (Point2i pPixel : tileBounds) {
+                    tileSampler->StartPixel(pPixel);
+                    tileSampler->SetSampleNumber(sampleOffset);
+                    int curSample = 1;
+                    if (!InsideExclusive(pPixel, pixelBounds))
+                        continue;
+                    do {
+                        // Generate a single sample using BDPT
+                        Point2f pFilm = (Point2f)pPixel + tileSampler->Get2D();
+
+                        // Trace the camera subpath
+                        Vertex *cameraVertices = arena.Alloc<Vertex>(maxDepth + 2);
+                        Vertex *lightVertices = arena.Alloc<Vertex>(maxDepth + 1);
+                        int nCamera = GenerateCameraSubpath(
+                            scene, *tileSampler, arena, maxDepth + 2, *camera,
+                            pFilm, cameraVertices);
+                        // Get a distribution for sampling the light at the
+                        // start of the light subpath. Because the light path
+                        // follows multiple bounces, basing the sampling
+                        // distribution on any of the vertices of the camera
+                        // path is unlikely to be a good strategy. We use the
+                        // PowerLightDistribution by default here, which
+                        // doesn't use the point passed to it.
+                        const Distribution1D *lightDistr =
+                            lightDistribution->Lookup(cameraVertices[0].p());
+                        // Now trace the light subpath
+                        int nLight = GenerateLightSubpath(
+                            scene, *tileSampler, arena, maxDepth + 1,
+                            cameraVertices[0].time(), *lightDistr, lightToIndex,
+                            lightVertices);
+
+                        // Execute all BDPT connection strategies
+                        Spectrum L(0.f);
+                        for (int t = 1; t <= nCamera; ++t) {
+                            for (int s = 0; s <= nLight; ++s) {
+                                int depth = t + s - 2;
+                                if ((s == 1 && t == 1) || depth < 0 ||
+                                    depth > maxDepth)
+                                    continue;
+                                // Execute the $(s, t)$ connection strategy and
+                                // update _L_
+                                Point2f pFilmNew = pFilm;
+                                Float misWeight = 0.f;
+                                Spectrum Lpath = ConnectBDPT(
+                                    scene, lightVertices, cameraVertices, s, t,
+                                    *lightDistr, lightToIndex, *camera, *tileSampler,
+                                    &pFilmNew, &misWeight, rectify ? &rectifier : nullptr);
+                                VLOG(2) << "Connect bdpt s: " << s <<", t: " << t <<
+                                    ", Lpath: " << Lpath << ", misWeight: " << misWeight;
+                                if (visualizeStrategies || visualizeWeights) {
+                                    Spectrum value;
+                                    if (visualizeStrategies)
+                                        value =
+                                            misWeight == 0 ? 0 : Lpath / misWeight;
+                                    if (visualizeWeights) value = Lpath;
+                                    weightFilms[BufferIndex(s, t)]->AddSplat(
+                                        pFilmNew, value);
+                                }
+                                if (t != 1)
+                                    L += Lpath;
+                                else
+                                    film->AddSplat(pFilmNew, Lpath);
+
+                                // for Stratification-Aware MIS: log the contribution
+                                if (estimateVariances) {
+                                    auto unweighted = (misWeight == 0 || Lpath == 0) ? 0 : (Lpath / misWeight);
+                                    rectifier.AddEstimate(pFilmNew, s+t, t, unweighted, Lpath);
+                                }
                             }
-                            if (t != 1)
-                                L += Lpath;
-                            else
-                                film->AddSplat(pFilmNew, Lpath);
                         }
-                    }
-                    VLOG(2) << "Add film sample pFilm: " << pFilm << ", L: " << L <<
-                        ", (y: " << L.y() << ")";
-                    filmTile->AddSample(pFilm, L);
-                    arena.Reset();
-                } while (tileSampler->StartNextSample());
-            }
-            film->MergeFilmTile(std::move(filmTile));
-            reporter.Update();
-            LOG(INFO) << "Finished image tile " << tileBounds;
-        }, Point2i(nXTiles, nYTiles));
-        reporter.Done();
-    }
-    film->WriteImage(1.0f / sampler->samplesPerPixel);
+                        VLOG(2) << "Add film sample pFilm: " << pFilm << ", L: " << L <<
+                            ", (y: " << L.y() << ")";
+                        filmTile->AddSample(pFilm, L);
+                        arena.Reset();
+                    } while (curSample++ < sampleCount && tileSampler->StartNextSample());
+                }
+                film->MergeFilmTile(std::move(filmTile));
+                reporter.Update();
+                LOG(INFO) << "Finished image tile " << tileBounds;
+            }, Point2i(nXTiles, nYTiles));
+            reporter.Done();
+        }
 
-    // Write buffers for debug visualization
-    if (visualizeStrategies || visualizeWeights) {
-        const Float invSampleCount = 1.0f / sampler->samplesPerPixel;
-        for (size_t i = 0; i < weightFilms.size(); ++i)
-            if (weightFilms[i]) weightFilms[i]->WriteImage(invSampleCount);
+        frameBuffers.emplace_back(film->WriteImageToBuffer(1.0f / sampleCount));
+        film->Clear();
+
+        // Write buffers for debug visualization
+        if (visualizeStrategies || visualizeWeights) {
+            const Float invSampleCount = 1.0f / sampleCount;
+            for (size_t i = 0; i < weightFilms.size(); ++i)
+                if (weightFilms[i]) {
+                    weightFrameBuffers.emplace_back(weightFilms[i]->WriteImageToBuffer(invSampleCount));
+                    weightFilms[i]->Clear();
+                }
+        }
+    };
+
+    // TODO allow a flag to render a single-iteration balance heuristic weighted image
+
+    // Prepass iteration
+    renderIterFn(1, 0, "Prepass", true, false);
+    rectifier.Prepare(1);
+
+    // Rendering with rectified weights
+    renderIterFn(sampler->samplesPerPixel - 1, 1, "Rendering", false, true);
+
+    // Weight and merge the buffers
+    auto &prepass = frameBuffers[0];
+    auto &rectified = frameBuffers[1];
+    auto &out = frameBuffers[0];
+
+    Float invSampleCount = 1.0f / sampler->samplesPerPixel;
+    Float weightPrepass = invSampleCount;
+    Float weightRectified =  (sampler->samplesPerPixel - 1) * invSampleCount;
+
+    size_t offset = 0;
+    for (Point2i px : film->croppedPixelBounds) {
+        if (rectifier.IsMasked(px)) { // ignore the prepass
+            out[offset + 0] = rectified[offset + 0];
+            out[offset + 1] = rectified[offset + 1];
+            out[offset + 2] = rectified[offset + 2];
+        } else { // average the two based on sample count
+            out[offset + 0] = prepass[offset + 0] * weightPrepass + rectified[offset + 0] * weightRectified;
+            out[offset + 1] = prepass[offset + 1] * weightPrepass + rectified[offset + 1] * weightRectified;
+            out[offset + 2] = prepass[offset + 2] * weightPrepass + rectified[offset + 2] * weightRectified;
+        }
+        offset += 3;
     }
+
+    pbrt::WriteImage(film->filename, out.data(), film->croppedPixelBounds, film->fullResolution);
+
+    // TODO implement flag to enable / disable this
+    rectifier.WriteImages();
 }
 
 Spectrum ConnectBDPT(
@@ -446,7 +520,7 @@ Spectrum ConnectBDPT(
     int t, const Distribution1D &lightDistr,
     const std::unordered_map<const Light *, size_t> &lightToIndex,
     const Camera &camera, Sampler &sampler, Point2f *pRaster,
-    Float *misWeightPtr) {
+    Float *misWeightPtr, const SAMISRectifier *rectifier) {
     ProfilePhase _(Prof::BDPTConnectSubpaths);
     Spectrum L(0.f);
     // Ignore invalid connections related to infinite area lights
@@ -525,7 +599,8 @@ Spectrum ConnectBDPT(
     // Compute MIS weight for connection strategy
     Float misWeight =
         L.IsBlack() ? 0.f : MISWeight(scene, lightVertices, cameraVertices,
-                                      sampled, s, t, lightDistr, lightToIndex);
+                                      sampled, s, t, lightDistr, lightToIndex,
+                                      Point2i(pRaster->x, pRaster->y), rectifier);
     VLOG(2) << "MIS weight for (s,t) = (" << s << ", " << t << ") connection: "
             << misWeight;
     DCHECK(!std::isnan(misWeight));

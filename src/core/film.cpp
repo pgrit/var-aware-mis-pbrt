@@ -165,11 +165,12 @@ void Film::AddSplat(const Point2f &p, Spectrum v) {
     for (int i = 0; i < 3; ++i) pixel.splatXYZ[i].Add(xyz[i]);
 }
 
-void Film::WriteImage(Float splatScale) {
-    // Convert image to RGB and compute final pixel values
+std::vector<Float> Film::WriteImageToBuffer(Float splatScale) {
     LOG(INFO) <<
         "Converting image to RGB and computing final weighted pixel values";
-    std::unique_ptr<Float[]> rgb(new Float[3 * croppedPixelBounds.Area()]);
+
+    std::vector<Float> rgb(3 * croppedPixelBounds.Area());
+
     int offset = 0;
     for (Point2i p : croppedPixelBounds) {
         // Convert pixel XYZ color to RGB
@@ -202,11 +203,19 @@ void Film::WriteImage(Float splatScale) {
         rgb[3 * offset + 2] *= scale;
         ++offset;
     }
+    return rgb;
+}
+
+void Film::WriteImage(Float splatScale) {
+    // Convert image to RGB and compute final pixel values
+    LOG(INFO) <<
+        "Converting image to RGB and computing final weighted pixel values";
+    auto rgb = WriteImageToBuffer(splatScale);
 
     // Write RGB image
     LOG(INFO) << "Writing image " << filename << " with bounds " <<
         croppedPixelBounds;
-    pbrt::WriteImage(filename, &rgb[0], croppedPixelBounds, fullResolution);
+    pbrt::WriteImage(filename, rgb.data(), croppedPixelBounds, fullResolution);
 }
 
 Film *CreateFilm(const ParamSet &params, std::unique_ptr<Filter> filter) {

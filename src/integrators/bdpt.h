@@ -48,6 +48,7 @@
 #include "reflection.h"
 #include "sampling.h"
 #include "scene.h"
+#include "samis.h"
 
 namespace pbrt {
 
@@ -439,7 +440,7 @@ Spectrum ConnectBDPT(
     int t, const Distribution1D &lightDistr,
     const std::unordered_map<const Light *, size_t> &lightToIndex,
     const Camera &camera, Sampler &sampler, Point2f *pRaster,
-    Float *misWeight = nullptr);
+    Float *misWeight = nullptr, const SAMISRectifier *rectifier = nullptr);
 BDPTIntegrator *CreateBDPTIntegrator(const ParamSet &params,
                                      std::shared_ptr<Sampler> sampler,
                                      std::shared_ptr<const Camera> camera);

@@ -70,6 +70,7 @@ class Film {
     void AddSplat(const Point2f &p, Spectrum v);
     void WriteImage(Float splatScale = 1);
     void Clear();
+    std::vector<Float> WriteImageToBuffer(Float splatScale = 1);
 
     // Film Public Data
     const Point2i fullResolution;
