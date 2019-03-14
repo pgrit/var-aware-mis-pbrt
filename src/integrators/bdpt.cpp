@@ -480,11 +480,13 @@ void BDPTIntegrator::Render(const Scene &scene) {
     // TODO allow a flag to render a single-iteration balance heuristic weighted image
 
     // Prepass iteration
-    renderIterFn(1, 0, "Prepass", true, false);
+    renderIterFn(1, 0, "Iteration 1", true, false);
     rectifier.Prepare(1);
 
+    bool enableRectification = false; // TODO allow flag to disable rectification
+
     // Rendering with rectified weights
-    renderIterFn(sampler->samplesPerPixel - 1, 1, "Rendering", false, true);
+    renderIterFn(sampler->samplesPerPixel - 1, 1, "Iterations 2 to " + std::to_string(sampler->samplesPerPixel), false, enableRectification);
 
     // Weight and merge the buffers
     auto &prepass = frameBuffers[0];
@@ -497,7 +499,7 @@ void BDPTIntegrator::Render(const Scene &scene) {
 
     size_t offset = 0;
     for (Point2i px : film->croppedPixelBounds) {
-        if (rectifier.IsMasked(px)) { // ignore the prepass
+        if (rectifier.IsMasked(px) && enableRectification) { // ignore the prepass
             out[offset + 0] = rectified[offset + 0];
             out[offset + 1] = rectified[offset + 1];
             out[offset + 2] = rectified[offset + 2];
