@@ -3,10 +3,11 @@
 
 namespace pbrt {
 
-SAMISRectifier::SAMISRectifier(const Film *film, int minDepth, int maxDepth, int downsamplingFactor)
+SAMISRectifier::SAMISRectifier(const Film *film, int minDepth, int maxDepth, int downsamplingFactor, bool considerMis)
 : film(film), minDepth(minDepth), maxDepth(maxDepth), downsamplingFactor(downsamplingFactor)
 , width(film->croppedPixelBounds.Diagonal().x), height(film->croppedPixelBounds.Diagonal().y)
 , reducedWidth(width / downsamplingFactor), reducedHeight(height / downsamplingFactor)
+, considerMis(considerMis)
 {
     // TODO pass lambda functions to constructor that return the number of techniques for a given path length
 
@@ -27,9 +28,11 @@ void SAMISRectifier::AddEstimate(const Point2f &pixel, int pathLen, int techniqu
     const int y = std::max(std::min(int(pixel.y), height - 1), 0);
     const int index = y * width + x;
 
-    Float squareEstim = unweightedEstimate.y();
+    const Spectrum& estim = considerMis ? weightedEstimate : unweightedEstimate;
+
+    Float squareEstim = estim.y();
     squareEstim *= squareEstim;
-    AtomicAdd(techImages[pathLen - minDepth][technique - 1][index], unweightedEstimate.y());
+    AtomicAdd(techImages[pathLen - minDepth][technique - 1][index], estim.y());
 }
 
 void SAMISRectifier::Prepare(int sampleCount) {

@@ -21,7 +21,7 @@ class SAMISRectifier {
     // - replace by constant of one if no factor significantly larger
     // - manually modify the parameters for filtering etc
 public:
-    SAMISRectifier(const Film *film, int minDepth, int maxDepth, int downsamplingFactor);
+    SAMISRectifier(const Film *film, int minDepth, int maxDepth, int downsamplingFactor, bool considerMis);
 
     void AddEstimate(const Point2f& pixel, int pathLen, int technique,
                      const Spectrum &unweightedEstimate, const Spectrum &weightedEstimate);
@@ -48,6 +48,7 @@ private:
     const int reducedWidth;
     const int reducedHeight;
     const Film *film;
+    const bool considerMis;
 
     // A datatype that allows copying std::atomic
     // The copy procedure itself is not atomic

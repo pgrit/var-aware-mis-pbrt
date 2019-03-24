@@ -360,7 +360,7 @@ void BDPTIntegrator::Render(const Scene &scene) {
     // The first uses the balance heuristic and estimates the stratification factors.
     // The resulting images are averaged, except for those pixels where the stratification factors are very large.
     // To minimize change to the exisiting code base, the render loop is encapuslated in a lambda function.
-    SAMISRectifier rectifier(film, 3, 3, 8); // TODO make parameters configurable
+    SAMISRectifier rectifier(film, 3, 3, 8, false); // TODO make parameters configurable
     auto renderIterFn = [&](int sampleCount, int sampleOffset, const std::string &iterName,
                             bool estimateVariances, bool rectify) {
         ProgressReporter reporter(nXTiles * nYTiles, iterName);
@@ -483,7 +483,7 @@ void BDPTIntegrator::Render(const Scene &scene) {
     renderIterFn(1, 0, "Iteration 1", true, false);
     rectifier.Prepare(1);
 
-    bool enableRectification = false; // TODO allow flag to disable rectification
+    bool enableRectification = true; // TODO allow flag to disable rectification
 
     // Rendering with rectified weights
     renderIterFn(sampler->samplesPerPixel - 1, 1, "Iterations 2 to " + std::to_string(sampler->samplesPerPixel), false, enableRectification);
