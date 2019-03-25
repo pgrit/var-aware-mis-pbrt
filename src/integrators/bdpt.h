@@ -128,19 +128,53 @@ inline Float InfiniteLightDensity(
 // BDPT Declarations
 class BDPTIntegrator : public Integrator {
   public:
+    // Selected strategy when computing the additional factors for MIS
+    // See the corresponding implementations in Render() for the math
+    enum MisStrategy {
+        Balance,
+        Power,
+        Variance,
+        RelativeVariance,
+        RelativeDeviation,
+        RelVarPlusOne,
+        RecipVarPlusOne,
+        MomentOverVar
+    };
+
+    // Supported modes for the weighting process
+    enum WeightingMode {
+        Injected, // Apply directly inside the MIS weighting function
+        ReWeighted // Re-weight the balance weighted estimates
+    };
+
     // BDPTIntegrator Public Methods
     BDPTIntegrator(std::shared_ptr<Sampler> sampler,
                    std::shared_ptr<const Camera> camera, int maxDepth,
                    bool visualizeStrategies, bool visualizeWeights,
                    const Bounds2i &pixelBounds,
-                   const std::string &lightSampleStrategy = "power")
+                   const std::string &lightSampleStrategy = "power",
+                   MisStrategy misStrategy = MomentOverVar,
+                   WeightingMode weightingMode = Injected,
+                   int rectiMinDepth = 1,
+                   int rectiMaxDepth = 1,
+                   int downsamplingFactor = 8,
+                   bool useVarianceOfWeightedTechniques = false,
+                   bool visualizeFactors = true)
         : sampler(sampler),
           camera(camera),
           maxDepth(maxDepth),
           visualizeStrategies(visualizeStrategies),
           visualizeWeights(visualizeWeights),
           pixelBounds(pixelBounds),
-          lightSampleStrategy(lightSampleStrategy) {}
+          lightSampleStrategy(lightSampleStrategy),
+          misStrategy(misStrategy),
+          weightingMode(weightingMode),
+          rectiMinDepth(rectiMinDepth+2),
+          rectiMaxDepth(rectiMaxDepth+2),
+          downsamplingFactor(downsamplingFactor),
+          useVarianceOfWeightedTechniques(useVarianceOfWeightedTechniques),
+          visualizeFactors(visualizeFactors) {}
+
     void Render(const Scene &scene);
 
   private:
@@ -152,6 +186,13 @@ class BDPTIntegrator : public Integrator {
     const bool visualizeWeights;
     const Bounds2i pixelBounds;
     const std::string lightSampleStrategy;
+    const MisStrategy misStrategy;
+    const WeightingMode weightingMode;
+    const int rectiMinDepth;
+    const int rectiMaxDepth;
+    const int downsamplingFactor;
+    const bool useVarianceOfWeightedTechniques;
+    const bool visualizeFactors;
 };
 
 struct Vertex {

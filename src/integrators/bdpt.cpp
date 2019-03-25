@@ -356,11 +356,86 @@ void BDPTIntegrator::Render(const Scene &scene) {
     std::vector<std::vector<Float>> frameBuffers;
     std::vector<std::vector<Float>> weightFrameBuffers;
 
+    // Select the weight computation scheme to use.
+    // These are used for empirical validation of our theory:
+    // "MomentOverVar" should perform best across all scenes
+    SAMISRectifier::ComputeFactorFn factorScheme;
+    switch (misStrategy) {
+    case Balance:
+    case Power:
+        factorScheme = [&](int d, int t, Float var, Float mean) {
+            return Float(1);
+        };
+        break;
+
+    case Variance:
+        factorScheme = [&](int d, int t, Float var, Float mean) {
+            if (var != 0 && mean != 0)
+                return 1 / var;
+            else
+                return Float(1); // TODO this is arbitrary
+        };
+        break;
+
+    case RelativeVariance:
+        factorScheme = [&](int d, int t, Float var, Float mean) {
+            if (var != 0 && mean != 0)
+                return mean * mean / var;
+            else
+                return Float(1); // TODO this is arbitrary
+        };
+        break;
+
+    case RelativeDeviation:
+        factorScheme = [&](int d, int t, Float var, Float mean) {
+            if (var != 0 && mean != 0)
+                return mean / std::sqrt(var);
+            else
+                return Float(1); // TODO this is arbitrary
+        };
+        break;
+
+    case RelVarPlusOne:
+        factorScheme = [&](int d, int t, Float var, Float mean) {
+            if (var != 0 && mean != 0)
+                return 1 + mean / std::sqrt(var);
+            else
+                return Float(1);
+        };
+        break;
+
+    case RecipVarPlusOne:
+        factorScheme = [&](int d, int t, Float var, Float mean) {
+            if (var != 0 && mean != 0)
+                return 1 + 1 / var;
+            else
+                return Float(1);
+        };
+        break;
+
+    case MomentOverVar:
+    default:
+        factorScheme = [&](int d, int t, Float var, Float mean) {
+            if (var != 0 && mean != 0)
+                return 1 + mean * mean / var;
+            else
+                return Float(1);
+        };
+        break;
+    }
+
+    bool enableRectification = misStrategy != Power && misStrategy != Balance;
+
+    // Configure the rectifier
+    std::unique_ptr<SAMISRectifier> rectifier;
+
+    if (enableRectification)
+        rectifier.reset(new SAMISRectifier(film, rectiMinDepth, rectiMaxDepth, downsamplingFactor, useVarianceOfWeightedTechniques, factorScheme));
+
     // For Stratification-Aware MIS: the render loop is separated into two iterations.
     // The first uses the balance heuristic and estimates the stratification factors.
     // The resulting images are averaged, except for those pixels where the stratification factors are very large.
     // To minimize change to the exisiting code base, the render loop is encapuslated in a lambda function.
-    SAMISRectifier rectifier(film, 3, 3, 8, false); // TODO make parameters configurable
     auto renderIterFn = [&](int sampleCount, int sampleOffset, const std::string &iterName,
                             bool estimateVariances, bool rectify) {
         ProgressReporter reporter(nXTiles * nYTiles, iterName);
@@ -426,7 +501,7 @@ void BDPTIntegrator::Render(const Scene &scene) {
                                 Spectrum Lpath = ConnectBDPT(
                                     scene, lightVertices, cameraVertices, s, t,
                                     *lightDistr, lightToIndex, *camera, *tileSampler,
-                                    &pFilmNew, &misWeight, rectify ? &rectifier : nullptr);
+                                    &pFilmNew, &misWeight, rectify ? rectifier.get() : nullptr);
                                 VLOG(2) << "Connect bdpt s: " << s <<", t: " << t <<
                                     ", Lpath: " << Lpath << ", misWeight: " << misWeight;
                                 if (visualizeStrategies || visualizeWeights) {
@@ -446,7 +521,7 @@ void BDPTIntegrator::Render(const Scene &scene) {
                                 // for Stratification-Aware MIS: log the contribution
                                 if (estimateVariances) {
                                     auto unweighted = (misWeight == 0 || Lpath == 0) ? 0 : (Lpath / misWeight);
-                                    rectifier.AddEstimate(pFilmNew, s+t, t, unweighted, Lpath);
+                                    rectifier->AddEstimate(pFilmNew, s+t, t, unweighted, Lpath);
                                 }
                             }
                         }
@@ -477,13 +552,11 @@ void BDPTIntegrator::Render(const Scene &scene) {
         }
     };
 
-    // TODO allow a flag to render a single-iteration balance heuristic weighted image
-
     // Prepass iteration
-    renderIterFn(1, 0, "Iteration 1", true, false);
-    rectifier.Prepare(1);
+    renderIterFn(1, 0, "Iteration 1", enableRectification, false);
 
-    bool enableRectification = true; // TODO allow flag to disable rectification
+    if (enableRectification)
+        rectifier->Prepare(1);
 
     // Rendering with rectified weights
     renderIterFn(sampler->samplesPerPixel - 1, 1, "Iterations 2 to " + std::to_string(sampler->samplesPerPixel), false, enableRectification);
@@ -499,22 +572,23 @@ void BDPTIntegrator::Render(const Scene &scene) {
 
     size_t offset = 0;
     for (Point2i px : film->croppedPixelBounds) {
-        if (rectifier.IsMasked(px) && enableRectification) { // ignore the prepass
+        // TODO enable again ....
+        // if (rectifier->IsMasked(px) && enableRectification) { // ignore the prepass
             out[offset + 0] = rectified[offset + 0];
             out[offset + 1] = rectified[offset + 1];
             out[offset + 2] = rectified[offset + 2];
-        } else { // average the two based on sample count
-            out[offset + 0] = prepass[offset + 0] * weightPrepass + rectified[offset + 0] * weightRectified;
-            out[offset + 1] = prepass[offset + 1] * weightPrepass + rectified[offset + 1] * weightRectified;
-            out[offset + 2] = prepass[offset + 2] * weightPrepass + rectified[offset + 2] * weightRectified;
-        }
+        // } else { // average the two based on sample count
+        //     out[offset + 0] = prepass[offset + 0] * weightPrepass + rectified[offset + 0] * weightRectified;
+        //     out[offset + 1] = prepass[offset + 1] * weightPrepass + rectified[offset + 1] * weightRectified;
+        //     out[offset + 2] = prepass[offset + 2] * weightPrepass + rectified[offset + 2] * weightRectified;
+        // }
         offset += 3;
     }
 
     pbrt::WriteImage(film->filename, out.data(), film->croppedPixelBounds, film->fullResolution);
 
-    // TODO implement flag to enable / disable this
-    rectifier.WriteImages();
+    if (visualizeFactors)
+        rectifier->WriteImages();
 }
 
 Spectrum ConnectBDPT(
@@ -641,8 +715,53 @@ BDPTIntegrator *CreateBDPTIntegrator(const ParamSet &params,
 
     std::string lightStrategy = params.FindOneString("lightsamplestrategy",
                                                      "power");
+
+    BDPTIntegrator::MisStrategy misStrategy;
+    std::string misStrat = params.FindOneString("misstrategy", "momentovervar");
+    if (misStrat == "balance") {
+        misStrategy = BDPTIntegrator::Balance;
+    } else if (misStrat == "power") {
+        misStrategy = BDPTIntegrator::Balance; // Power; TODO implement power heuristic
+        Warning("power heuristic not yet implemented");
+    } else if (misStrat == "variance") {
+        misStrategy = BDPTIntegrator::Variance;
+    } else if (misStrat == "relativevariance") {
+        misStrategy = BDPTIntegrator::RelativeVariance;
+    } else if (misStrat == "relativedeviation") {
+        misStrategy = BDPTIntegrator::RelativeDeviation;
+    } else if (misStrat == "relvarplusone") {
+        misStrategy = BDPTIntegrator::RelVarPlusOne;
+    } else if (misStrat == "recipvarplusone") {
+        misStrategy = BDPTIntegrator::RecipVarPlusOne;
+    } else if (misStrat == "momentovervar") {
+        misStrategy = BDPTIntegrator::MomentOverVar;
+    } else {
+        misStrategy = BDPTIntegrator::MomentOverVar;
+        Warning("Unknown \"misstrategy\" specified, defaulting to \"momentovervar\"");
+    }
+
+    BDPTIntegrator::WeightingMode weightingMode;
+    std::string wMode = params.FindOneString("weightingmode", "injected");
+    if (wMode == "injected") {
+        weightingMode = BDPTIntegrator::Injected;
+    } else if (wMode == "reweighted") {
+        weightingMode = BDPTIntegrator::ReWeighted;
+    } else {
+        weightingMode = BDPTIntegrator::Injected;
+        Warning("Unknown \"weightingmode\" specified, defaulting to \"injected\"");
+    }
+
+    int rectiMinDepth = params.FindOneInt("rectimindepth", 1);
+    int rectiMaxDepth = params.FindOneInt("rectimaxdepth", 1);
+    int downsamplingFactor = params.FindOneInt("downsamplingfactor", 8);
+    bool useVarianceOfWeightedTechniques = params.FindOneBool("weightedvariance", false);
+    bool visualizeFactors = params.FindOneBool("visualizefactors", true);
+
     return new BDPTIntegrator(sampler, camera, maxDepth, visualizeStrategies,
-                              visualizeWeights, pixelBounds, lightStrategy);
+                              visualizeWeights, pixelBounds, lightStrategy,
+                              misStrategy, weightingMode, rectiMinDepth, rectiMaxDepth,
+                              downsamplingFactor, useVarianceOfWeightedTechniques,
+                              visualizeFactors);
 }
 
 }  // namespace pbrt
