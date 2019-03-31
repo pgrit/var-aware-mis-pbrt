@@ -370,7 +370,7 @@ void BDPTIntegrator::Render(const Scene &scene) {
                 // Render a single tile using BDPT
                 MemoryArena arena;
                 int seed = tile.y * nXTiles + tile.x;
-                std::unique_ptr<Sampler> tileSampler = sampler->Clone(seed);
+                std::unique_ptr<Sampler> tileSampler = sampler->Clone(seed + sampleOffset);
                 int x0 = sampleBounds.pMin.x + tile.x * tileSize;
                 int x1 = std::min(x0 + tileSize, sampleBounds.pMax.x);
                 int y0 = sampleBounds.pMin.y + tile.y * tileSize;
