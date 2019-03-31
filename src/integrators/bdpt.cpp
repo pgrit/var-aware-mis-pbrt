@@ -310,6 +310,23 @@ inline int BufferIndex(int s, int t) {
     return s + above * (5 + above) / 2;
 }
 
+/// Returns the initializer for the FNV hash function
+inline uint32_t fnv_init() { return 0x811C9DC5; }
+
+/// Hashes 4 bytes using FNV
+inline uint32_t fnv_hash(uint32_t h, uint32_t d) {
+    h = (h * 16777619) ^ ( d        & 0xFF);
+    h = (h * 16777619) ^ ((d >>  8) & 0xFF);
+    h = (h * 16777619) ^ ((d >> 16) & 0xFF);
+    h = (h * 16777619) ^ ((d >> 24) & 0xFF);
+    return h;
+}
+
+/// Returns a seed for a sampler object, based on the current pixel id and iteration count
+inline uint32_t sampler_seed(uint32_t pixel, uint32_t iter) {
+    return fnv_hash(fnv_hash(fnv_init(), pixel), iter);
+}
+
 void BDPTIntegrator::Render(const Scene &scene) {
     std::unique_ptr<LightDistribution> lightDistribution =
         CreateLightSampleDistribution(lightSampleStrategy, scene);
@@ -444,8 +461,8 @@ void BDPTIntegrator::Render(const Scene &scene) {
             ParallelFor2D([&](const Point2i tile) {
                 // Render a single tile using BDPT
                 MemoryArena arena;
-                int seed = tile.y * nXTiles + tile.x;
-                std::unique_ptr<Sampler> tileSampler = sampler->Clone(seed + sampleOffset);
+                int seed = sampler_seed(tile.y * nXTiles + tile.x, sampleOffset);
+                std::unique_ptr<Sampler> tileSampler = sampler->Clone(seed);
                 int x0 = sampleBounds.pMin.x + tile.x * tileSize;
                 int x1 = std::min(x0 + tileSize, sampleBounds.pMax.x);
                 int y0 = sampleBounds.pMin.y + tile.y * tileSize;
