@@ -21,7 +21,12 @@ class SAMISRectifier {
     // - replace by constant of one if no factor significantly larger
     // - manually modify the parameters for filtering etc
 public:
-    SAMISRectifier(const Film *film, int minDepth, int maxDepth, int downsamplingFactor, bool considerMis);
+    // Function that returns the weighting factor for a given path length and technique.
+    // Computation should depend solely on the provided variance and mean.
+    using ComputeFactorFn = std::function<Float(int, int, Float, Float)>;
+
+    SAMISRectifier(const Film *film, int minDepth, int maxDepth, int downsamplingFactor,
+                   bool considerMis, const ComputeFactorFn& computeFactor);
 
     void AddEstimate(const Point2f& pixel, int pathLen, int technique,
                      const Spectrum &unweightedEstimate, const Spectrum &weightedEstimate);
@@ -49,6 +54,8 @@ private:
     const int reducedHeight;
     const Film *film;
     const bool considerMis;
+
+    ComputeFactorFn computeFactor;
 
     // A datatype that allows copying std::atomic
     // The copy procedure itself is not atomic

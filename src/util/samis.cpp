@@ -3,11 +3,12 @@
 
 namespace pbrt {
 
-SAMISRectifier::SAMISRectifier(const Film *film, int minDepth, int maxDepth, int downsamplingFactor, bool considerMis)
+SAMISRectifier::SAMISRectifier(const Film *film, int minDepth, int maxDepth, int downsamplingFactor,
+                               bool considerMis, const ComputeFactorFn& computeFactor)
 : film(film), minDepth(minDepth), maxDepth(maxDepth), downsamplingFactor(downsamplingFactor)
 , width(film->croppedPixelBounds.Diagonal().x), height(film->croppedPixelBounds.Diagonal().y)
 , reducedWidth(width / downsamplingFactor), reducedHeight(height / downsamplingFactor)
-, considerMis(considerMis)
+, considerMis(considerMis), computeFactor(computeFactor)
 {
     // TODO pass lambda functions to constructor that return the number of techniques for a given path length
 
@@ -63,11 +64,7 @@ void SAMISRectifier::Prepare(int sampleCount) {
                         }
                     }
                     var /= (n - 1);
-                    auto &sFactor = stratFactors[d - minDepth][t - 1][y * reducedWidth + x];
-                    if (var != 0 && mean != 0)
-                        sFactor = 1 + mean * mean / var; // TODO support lambda function for this formula?
-                    else
-                        sFactor = 1;
+                    stratFactors[d - minDepth][t - 1][y * reducedWidth + x] = computeFactor(d, t, var, mean);
                 }
             }, reducedHeight, 1);
         }
@@ -108,6 +105,8 @@ void SAMISRectifier::WriteImages() {
 Float SAMISRectifier::Get(const Point2i &pixel, int pathLen, int technique) const {
     if (pathLen < minDepth || pathLen > maxDepth)
         return 1.0f;
+
+    // TODO add bilinear interpolation
 
     const int x = std::max(std::min(int(pixel.x / downsamplingFactor), reducedWidth - 1), 0);
     const int y = std::max(std::min(int(pixel.y / downsamplingFactor), reducedHeight - 1), 0);
