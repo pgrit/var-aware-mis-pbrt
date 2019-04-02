@@ -28,7 +28,7 @@ void GuidedDirectIllum::Render(const Scene &scene) {
 }
 
 void GuidedDirectIllum::SetUp(const Scene &scene) {
-
+    guidedLightDistrib.reset(new SpatialLightDistribution(scene));
 }
 
 void GuidedDirectIllum::PrepareIteration(const Scene &scene, const int iter) {
@@ -99,9 +99,9 @@ void GuidedDirectIllum::RenderIteration(const Scene &scene, const int iter) {
                 1 / std::sqrt((Float)tileSampler->samplesPerPixel));
 
             Spectrum L(0.f);
-            if (rayWeight > 0) 
+            if (rayWeight > 0)
                 L = Li(ray, scene, *tileSampler, arena, pixel, iter);
-            
+
             filmTile->AddSample(cameraSample.pFilm, L, rayWeight);
 
             arena.Reset();
@@ -127,7 +127,7 @@ Spectrum GuidedDirectIllum::Li(const RayDifferential &ray, const Scene &scene,
             const int iter) const
 {
     Spectrum L(0.f);
-    
+
     // Find closest ray intersection or return background radiance
     SurfaceInteraction isect;
     if (!scene.Intersect(ray, &isect)) {
@@ -140,23 +140,150 @@ Spectrum GuidedDirectIllum::Li(const RayDifferential &ray, const Scene &scene,
     if (!isect.bsdf)
         return Li(isect.SpawnRay(ray.d), scene, sampler, arena, pixel, iter);
     Vector3f wo = isect.wo;
-    
+
     // Compute emitted light if ray hit an area light source
     L += isect.Le(wo);
 
     if (scene.lights.size() > 0) {
-        // TODO apply our MIS scheme to BSDF + light samples
+        const Distribution1D *lightDistr = guidedLightDistrib->Lookup(isect.p);
+        Float uniformSelPdf = 1 / Float(scene.lights.size());
 
-        // TODO combine multiple light sampling strategies
+        int lightIdx;
+        Light* lightUniform = SampleLight(scene, sampler, nullptr, &lightIdx);
+        L += SampleLightSurface(scene, *lightUniform, isect, sampler, SAMPLE_UNIFORM) / uniformSelPdf;
 
-        L += UniformSampleOneLight(isect, scene, arena, sampler);
+        Light* lightGuided = SampleLight(scene, sampler, lightDistr, &lightIdx);
+        Float guidedSelPdf = lightDistr->DiscretePDF(lightIdx);
+        L += SampleLightSurface(scene, *lightGuided, isect, sampler, SAMPLE_GUIDED) / guidedSelPdf;
+
+        L += SampleBsdf(scene, isect, sampler);
+
+        L += Spectrum(0);
     }
 
     return L;
 }
 
+Light* GuidedDirectIllum::SampleLight(const Scene &scene, Sampler &sampler,
+    const Distribution1D *lightDistrib, int* lightNum) const {
+    // Randomly choose a single light to sample
+    int nLights = int(scene.lights.size());
+    if (nLights == 0) return nullptr;
+    if (lightDistrib)
+        *lightNum = lightDistrib->SampleDiscrete(sampler.Get1D());
+    else
+        *lightNum = std::min((int)(sampler.Get1D() * nLights), nLights - 1);
+    return scene.lights[*lightNum].get();
+}
+
+Spectrum GuidedDirectIllum::SampleLightSurface(const Scene &scene, const Light& light,
+    const Interaction &it, Sampler &sampler, SamplingTech tech) const
+{
+    Spectrum L(0.0f);
+
+    // sample point on the light
+    Point2f uLight = sampler.Get2D();
+    Vector3f wi;
+    Float lightPdf = 0, scatteringPdf = 0;
+    VisibilityTester visibility;
+    Spectrum Li = light.Sample_Li(it, uLight, &wi, &lightPdf, &visibility);
+
+    if (lightPdf > 0 && !Li.IsBlack()) {
+        // Compute BSDF or phase function's value for light sample
+        Spectrum f;
+        if (it.IsSurfaceInteraction()) {
+            // Evaluate BSDF for light sampling strategy
+            const SurfaceInteraction &isect = (const SurfaceInteraction &)it;
+            f = isect.bsdf->f(isect.wo, wi, BSDF_ALL) *
+                AbsDot(wi, isect.shading.n);
+            scatteringPdf = isect.bsdf->Pdf(isect.wo, wi, BSDF_ALL);
+        } else {
+            // Evaluate phase function for light sampling strategy
+            const MediumInteraction &mi = (const MediumInteraction &)it;
+            Float p = mi.phase->p(mi.wo, wi);
+            f = Spectrum(p);
+            scatteringPdf = p;
+        }
+        if (!f.IsBlack()) {
+            // Compute effect of visibility for light source sample
+            // if (handleMedia) {
+            //     Li *= visibility.Tr(scene, sampler);
+            // } else
+            if (!visibility.Unoccluded(scene)) {
+                Li = Spectrum(0.f);
+            }
+
+            // Add light's contribution to reflected radiance
+            if (!Li.IsBlack()) {
+                if (IsDeltaLight(light.flags))
+                    L = f * Li / lightPdf;
+                else {
+                    Float weight = MisWeight(&light, tech, scatteringPdf, lightPdf);
+                    L = f * Li * weight / lightPdf;
+                }
+            }
+        }
+    }
+    return L;
+}
+
+Spectrum GuidedDirectIllum::SampleBsdf(const Scene &scene, const Interaction &it, Sampler &sampler) const {
+    Point2f uScattering = sampler.Get2D();
+
+    Spectrum f;
+    Vector3f wi;
+    Float scatteringPdf;
+    Float lightPdf;
+    bool sampledSpecular = false;
+    if (it.IsSurfaceInteraction()) {
+        // Sample scattered direction for surface interactions
+        BxDFType sampledType;
+        const SurfaceInteraction &isect = (const SurfaceInteraction &)it;
+        f = isect.bsdf->Sample_f(isect.wo, &wi, uScattering, &scatteringPdf,
+                                 BSDF_ALL, &sampledType);
+        f *= AbsDot(wi, isect.shading.n);
+        sampledSpecular = (sampledType & BSDF_SPECULAR) != 0;
+    } else {
+        // Sample scattered direction for medium interactions
+        const MediumInteraction &mi = (const MediumInteraction &)it;
+        Float p = mi.phase->Sample_p(mi.wo, &wi, uScattering);
+        f = Spectrum(p);
+        scatteringPdf = p;
+    }
+
+    if (!f.IsBlack() && scatteringPdf > 0) {
+        // Account for light contributions along sampled direction _wi_
+
+        // Find intersection and compute transmittance
+        SurfaceInteraction lightIsect;
+        Ray ray = it.SpawnRay(wi);
+        bool foundSurfaceInteraction = scene.Intersect(ray, &lightIsect);
+
+        // Add light contribution from material sampling
+        Spectrum Li(0.f);
+        if (foundSurfaceInteraction) {
+            Li = lightIsect.Le(-wi);
+        }
+
+        Float weight = MisWeight(foundSurfaceInteraction ? lightIsect.primitive->GetAreaLight() : nullptr,
+                                 SAMPLE_BSDF, scatteringPdf, lightPdf);
+        return f * Li * weight / scatteringPdf;
+    }
+
+    return Spectrum(0.f);
+}
+
+Float GuidedDirectIllum::MisWeight(const Light* light, SamplingTech tech, Float pdfBsdf, Float pdfLight) const {
+    // TODO compute balance heuristic weights
+    // TODO implement logging of unweighted contribution
+    // TODO implement variance aware weights
+    // TODO implement optimal weights?
+
+    return 1.0f / 3.0f;
+}
+
 GuidedDirectIllum *CreateGuidedDiIntegrator(const ParamSet &params, std::shared_ptr<Sampler> sampler,
-                                            std::shared_ptr<const Camera> camera) 
+                                            std::shared_ptr<const Camera> camera)
 {
     return new GuidedDirectIllum(sampler, camera);
 }
