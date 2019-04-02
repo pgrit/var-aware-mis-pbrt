@@ -159,7 +159,8 @@ class BDPTIntegrator : public Integrator {
                    int rectiMaxDepth = 1,
                    int downsamplingFactor = 8,
                    bool useVarianceOfWeightedTechniques = false,
-                   bool visualizeFactors = true)
+                   bool visualizeFactors = true,
+                   bool forceLtOne = false)
         : sampler(sampler),
           camera(camera),
           maxDepth(maxDepth),
@@ -173,7 +174,8 @@ class BDPTIntegrator : public Integrator {
           rectiMaxDepth(rectiMaxDepth+2),
           downsamplingFactor(downsamplingFactor),
           useVarianceOfWeightedTechniques(useVarianceOfWeightedTechniques),
-          visualizeFactors(visualizeFactors) {}
+          visualizeFactors(visualizeFactors),
+          forceLtOne(forceLtOne) {}
 
     void Render(const Scene &scene);
 
@@ -193,6 +195,7 @@ class BDPTIntegrator : public Integrator {
     const int downsamplingFactor;
     const bool useVarianceOfWeightedTechniques;
     const bool visualizeFactors;
+    const bool forceLtOne;
 };
 
 struct Vertex {

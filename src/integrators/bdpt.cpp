@@ -333,7 +333,7 @@ void BDPTIntegrator::Render(const Scene &scene) {
     // Allocate buffers for debug visualization
     const int bufferCount = (1 + maxDepth) * (6 + maxDepth) / 2;
     std::vector<std::unique_ptr<Film>> weightFilms(bufferCount);
-    if (visualizeStrategies || visualizeWeights) {
+    if (weightingMode == ReWeighted || visualizeStrategies || visualizeWeights) {
         for (int depth = 0; depth <= maxDepth; ++depth) {
             for (int s = 0; s <= depth + 2; ++s) {
                 int t = depth + 2 - s;
@@ -354,12 +354,12 @@ void BDPTIntegrator::Render(const Scene &scene) {
     // Buffers to store the full images of each iteration.
     // Used to re-weight and combine the prepass with the following iterations.
     std::vector<std::vector<Float>> frameBuffers;
-    std::vector<std::vector<Float>> weightFrameBuffers;
 
     // Select the weight computation scheme to use.
     // These are used for empirical validation of our theory:
     // "MomentOverVar" should perform best across all scenes
     SAMISRectifier::ComputeFactorFn factorScheme;
+    // TODO REFACTOR no need for all those separate lambdas, move the switch into the function itself to reduce code duplication.
     switch (misStrategy) {
     case Balance:
     case Power:
@@ -370,6 +370,7 @@ void BDPTIntegrator::Render(const Scene &scene) {
 
     case Variance:
         factorScheme = [&](int d, int t, Float var, Float mean) {
+            if (forceLtOne && t == 1) return Float(1);
             if (var != 0 && mean != 0)
                 return 1 / var;
             else
@@ -379,6 +380,7 @@ void BDPTIntegrator::Render(const Scene &scene) {
 
     case RelativeVariance:
         factorScheme = [&](int d, int t, Float var, Float mean) {
+            if (forceLtOne && t == 1) return Float(1);
             if (var != 0 && mean != 0)
                 return mean * mean / var;
             else
@@ -388,6 +390,7 @@ void BDPTIntegrator::Render(const Scene &scene) {
 
     case RelativeDeviation:
         factorScheme = [&](int d, int t, Float var, Float mean) {
+            if (forceLtOne && t == 1) return Float(1);
             if (var != 0 && mean != 0)
                 return mean / std::sqrt(var);
             else
@@ -397,6 +400,7 @@ void BDPTIntegrator::Render(const Scene &scene) {
 
     case RelVarPlusOne:
         factorScheme = [&](int d, int t, Float var, Float mean) {
+            if (forceLtOne && t == 1) return Float(1);
             if (var != 0 && mean != 0)
                 return 1 + mean / std::sqrt(var);
             else
@@ -406,6 +410,7 @@ void BDPTIntegrator::Render(const Scene &scene) {
 
     case RecipVarPlusOne:
         factorScheme = [&](int d, int t, Float var, Float mean) {
+            if (forceLtOne && t == 1) return Float(1);
             if (var != 0 && mean != 0)
                 return 1 + 1 / var;
             else
@@ -416,6 +421,7 @@ void BDPTIntegrator::Render(const Scene &scene) {
     case MomentOverVar:
     default:
         factorScheme = [&](int d, int t, Float var, Float mean) {
+            if (forceLtOne && t == 1) return Float(1);
             if (var != 0 && mean != 0)
                 return 1 + mean * mean / var;
             else
@@ -494,6 +500,7 @@ void BDPTIntegrator::Render(const Scene &scene) {
                                 if ((s == 1 && t == 1) || depth < 0 ||
                                     depth > maxDepth)
                                     continue;
+
                                 // Execute the $(s, t)$ connection strategy and
                                 // update _L_
                                 Point2f pFilmNew = pFilm;
@@ -502,17 +509,10 @@ void BDPTIntegrator::Render(const Scene &scene) {
                                     scene, lightVertices, cameraVertices, s, t,
                                     *lightDistr, lightToIndex, *camera, *tileSampler,
                                     &pFilmNew, &misWeight, rectify ? rectifier.get() : nullptr);
-                                VLOG(2) << "Connect bdpt s: " << s <<", t: " << t <<
-                                    ", Lpath: " << Lpath << ", misWeight: " << misWeight;
-                                if (visualizeStrategies || visualizeWeights) {
-                                    Spectrum value;
-                                    if (visualizeStrategies)
-                                        value =
-                                            misWeight == 0 ? 0 : Lpath / misWeight;
-                                    if (visualizeWeights) value = Lpath;
-                                    weightFilms[BufferIndex(s, t)]->AddSplat(
-                                        pFilmNew, value);
-                                }
+
+                                if (weightingMode == ReWeighted)
+                                    weightFilms[BufferIndex(s, t)]->AddSplat(pFilmNew, Lpath);
+
                                 if (t != 1)
                                     L += Lpath;
                                 else
@@ -537,58 +537,109 @@ void BDPTIntegrator::Render(const Scene &scene) {
             }, Point2i(nXTiles, nYTiles));
             reporter.Done();
         }
-
+film->WriteImage(1.0f / sampleCount);
         frameBuffers.emplace_back(film->WriteImageToBuffer(1.0f / sampleCount));
         film->Clear();
 
         // Write buffers for debug visualization
-        if (visualizeStrategies || visualizeWeights) {
-            const Float invSampleCount = 1.0f / sampleCount;
-            for (size_t i = 0; i < weightFilms.size(); ++i)
-                if (weightFilms[i]) {
-                    weightFrameBuffers.emplace_back(weightFilms[i]->WriteImageToBuffer(invSampleCount));
-                    weightFilms[i]->Clear();
-                }
-        }
+        // if (weightingMode != ReWeighted || visualizeStrategies || visualizeWeights) {
+        //     const Float invSampleCount = 1.0f / sampleCount;
+        //     for (size_t i = 0; i < weightFilms.size(); ++i)
+        //         if (weightFilms[i]) {
+        //             // weightFrameBuffers.emplace_back(weightFilms[i]->WriteImageToBuffer(invSampleCount));
+        //             weightFilms[i]->Clear();
+        //         }
+        // }
     };
-
+renderIterFn(sampler->samplesPerPixel, 0, "Iteration 1", enableRectification, false);
     // Prepass iteration
-    renderIterFn(1, 0, "Iteration 1", enableRectification, false);
+    // renderIterFn(1, 0, "Iteration 1", enableRectification, false);
 
     if (enableRectification)
         rectifier->Prepare(1);
 
     // Rendering with rectified weights
-    renderIterFn(sampler->samplesPerPixel - 1, 1, "Iterations 2 to " + std::to_string(sampler->samplesPerPixel), false, enableRectification);
+    // renderIterFn(sampler->samplesPerPixel - 1, 1, "Iterations 2 to " + std::to_string(sampler->samplesPerPixel), false,
+    //              enableRectification && weightingMode == Injected);
 
     // Weight and merge the buffers
-    auto &prepass = frameBuffers[0];
-    auto &rectified = frameBuffers[1];
+    // auto &prepass = frameBuffers[0];
+    // auto &rectified = frameBuffers[1];
     auto &out = frameBuffers[0];
 
     Float invSampleCount = 1.0f / sampler->samplesPerPixel;
-    Float weightPrepass = invSampleCount;
-    Float weightRectified =  (sampler->samplesPerPixel - 1) * invSampleCount;
 
-    size_t offset = 0;
-    for (Point2i px : film->croppedPixelBounds) {
-        // TODO enable again ....
-        // if (rectifier->IsMasked(px) && enableRectification) { // ignore the prepass
-            out[offset + 0] = rectified[offset + 0];
-            out[offset + 1] = rectified[offset + 1];
-            out[offset + 2] = rectified[offset + 2];
-        // } else { // average the two based on sample count
-        //     out[offset + 0] = prepass[offset + 0] * weightPrepass + rectified[offset + 0] * weightRectified;
-        //     out[offset + 1] = prepass[offset + 1] * weightPrepass + rectified[offset + 1] * weightRectified;
-        //     out[offset + 2] = prepass[offset + 2] * weightPrepass + rectified[offset + 2] * weightRectified;
-        // }
-        offset += 3;
-    }
+    // if (weightingMode == Injected) {
+    //     Float weightPrepass = invSampleCount;
+    //     Float weightRectified =  (sampler->samplesPerPixel - 1) * invSampleCount;
 
-    pbrt::WriteImage(film->filename, out.data(), film->croppedPixelBounds, film->fullResolution);
+    //     size_t offset = 0;
+    //     for (Point2i px : film->croppedPixelBounds) {
+    //         if (rectifier->IsMasked(px) && enableRectification) { // ignore the prepass
+    //             out[offset + 0] = rectified[offset + 0];
+    //             out[offset + 1] = rectified[offset + 1];
+    //             out[offset + 2] = rectified[offset + 2];
+    //         } else { // average the two based on sample count
+    //             out[offset + 0] = prepass[offset + 0] * weightPrepass + rectified[offset + 0] * weightRectified;
+    //             out[offset + 1] = prepass[offset + 1] * weightPrepass + rectified[offset + 1] * weightRectified;
+    //             out[offset + 2] = prepass[offset + 2] * weightPrepass + rectified[offset + 2] * weightRectified;
+    //         }
+    //         offset += 3;
+    //     }
+    // } else {
+        // Copy the film contents for re-weighting. TODO this can be optimized away, but requires some further incisions into the Film class
+        std::vector<std::vector<Float>> weightFrameBuffers(bufferCount);
+        for (size_t i = 0; i < weightFilms.size(); ++i) {
+            if (weightFilms[i]) {
+                weightFilms[i]->WriteImage(invSampleCount);
+                weightFrameBuffers[i] = weightFilms[i]->WriteImageToBuffer(invSampleCount);
+            }
+        }
 
-    if (visualizeFactors)
-        rectifier->WriteImages();
+        size_t offset = 0;
+        for (Point2i px : film->croppedPixelBounds) {
+            out[offset + 0] = 0.0f;
+            out[offset + 1] = 0.0f;
+            out[offset + 2] = 0.0f;
+            for (int depth = 0; depth <= maxDepth; ++depth) {
+                // compute weighting factors to ensure unbiasedness
+                Float unweighted[3] = {0};
+                Float weighted[3] = {0};
+                for (int s = 0; s <= depth + 2; ++s) {
+                    int t = depth + 2 - s;
+                    if (t == 0 || (s == 1 && t == 1)) continue;
+                    unweighted[0] += weightFrameBuffers[BufferIndex(s, t)][offset + 0];
+                    unweighted[1] += weightFrameBuffers[BufferIndex(s, t)][offset + 1];
+                    unweighted[2] += weightFrameBuffers[BufferIndex(s, t)][offset + 2];
+                    Float w = rectifier->Get(px, depth, t);
+                    weighted[0] += unweighted[0] * w;
+                    weighted[1] += unweighted[1] * w;
+                    weighted[2] += unweighted[2] * w;
+                }
+
+                // re-weight the buffers for this path length
+                for (int s = 0; s <= depth + 2; ++s) {
+                    int t = depth + 2 - s;
+                    if (t == 0 || (s == 1 && t == 1)) continue;
+                    Float w = rectifier->Get(px, depth, t);
+                    out[offset + 0] += unweighted[0] / weighted[0] * w * weightFrameBuffers[BufferIndex(s, t)][offset + 0];
+                    out[offset + 1] += unweighted[1] / weighted[1] * w * weightFrameBuffers[BufferIndex(s, t)][offset + 1];
+                    out[offset + 2] += unweighted[2] / weighted[2] * w * weightFrameBuffers[BufferIndex(s, t)][offset + 2];
+
+                    out[offset + 0] = unweighted[0];
+                    out[offset + 1] = unweighted[1];
+                    out[offset + 2] = unweighted[2];
+                }
+            }
+
+            offset += 3;
+        }
+    // }
+
+    // pbrt::WriteImage(film->filename, out.data(), film->croppedPixelBounds, film->fullResolution);
+
+    // if (visualizeFactors)
+    //     rectifier->WriteImages();
 }
 
 Spectrum ConnectBDPT(
@@ -757,11 +808,13 @@ BDPTIntegrator *CreateBDPTIntegrator(const ParamSet &params,
     bool useVarianceOfWeightedTechniques = params.FindOneBool("weightedvariance", false);
     bool visualizeFactors = params.FindOneBool("visualizefactors", true);
 
+    bool forceLtOne = params.FindOneBool("forceltone", false);
+
     return new BDPTIntegrator(sampler, camera, maxDepth, visualizeStrategies,
                               visualizeWeights, pixelBounds, lightStrategy,
                               misStrategy, weightingMode, rectiMinDepth, rectiMaxDepth,
                               downsamplingFactor, useVarianceOfWeightedTechniques,
-                              visualizeFactors);
+                              visualizeFactors, forceLtOne);
 }
 
 }  // namespace pbrt

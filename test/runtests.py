@@ -26,16 +26,20 @@ integrators = {
 }
 
 strategies = { # as expected, the only method coming close to ours is reciprocal variance
-    'recip-var': '"string misstrategy" "variance" ',
+    # 'recip-var': '"string misstrategy" "variance" ',
     # 'rel-var': '"string misstrategy" "relativevariance" ',
     'moment': '"string misstrategy" "momentovervar" ',
     # 'rel-dev': '"string misstrategy" "relativedeviation" ',
     # 'rel-var-plus-one': '"string misstrategy" "relvarplusone" ',
     # 'recip-var-plus-one': '"string misstrategy" "recipvarplusone" ',
+
+    # 'recip-var-force': '"string misstrategy" "variance" "bool forceltone" "true" ',
+    # 'moment-force': '"string misstrategy" "momentovervar" "bool forceltone" "true" ',
 }
 
 modes = {
-    'injected': '"string weightingmode" "injected" ',
+    # 'injected': '"string weightingmode" "injected" ',
+    'reweighted': '"string weightingmode" "reweighted" ',
 }
 
 variants = {
@@ -51,14 +55,14 @@ scenes = {
         'path': '../../pbrt-v3-scenes/breakfast/',
         'template': 'template.pbrt'
     },
-    'livingroom' : {
-        'path': '../../pbrt-v3-scenes/white-room/',
-        'template': 'template.pbrt'
-    },
-    'bathroom' : {
-        'path': '../../pbrt-v3-scenes/bathroom/',
-        'template': 'template.pbrt'
-    }
+    # 'livingroom' : {
+    #     'path': '../../pbrt-v3-scenes/white-room/',
+    #     'template': 'template.pbrt'
+    # },
+    # 'bathroom' : {
+    #     'path': '../../pbrt-v3-scenes/bathroom/',
+    #     'template': 'template.pbrt'
+    # }
 }
 
 filenames = []
