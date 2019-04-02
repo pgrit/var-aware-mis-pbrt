@@ -48,7 +48,7 @@
 #include "reflection.h"
 #include "sampling.h"
 #include "scene.h"
-#include "samis.h"
+#include "util/samis.h"
 
 namespace pbrt {
 

@@ -454,6 +454,7 @@ FILE ( GLOB PBRT_SOURCE
   src/accelerators/*
   src/cameras/*
   src/filters/*
+  src/util/*
   src/integrators/*
   src/lights/*
   src/materials/*

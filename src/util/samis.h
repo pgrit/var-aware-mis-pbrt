@@ -3,8 +3,8 @@
 #pragma once
 #endif
 
-#ifndef PBRT_INTEGRATORS_SAMIS_H
-#define PBRT_INTEGRATORS_SAMIS_H
+#ifndef PBRT_UTIL_SAMIS_H
+#define PBRT_UTIL_SAMIS_H
 
 #include "pbrt.h"
 #include "geometry.h"
@@ -87,4 +87,4 @@ private:
 
 } // namespace pbrt
 
-#endif // PBRT_INTEGRATORS_SAMIS_H
+#endif // PBRT_UTIL_SAMIS_H
