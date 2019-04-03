@@ -12,6 +12,8 @@
 #include "scene.h"
 #include "lightdistrib.h"
 
+#include <unordered_map>
+
 namespace pbrt {
 
 // Same as DirectLighting integrator, but able to combine
@@ -36,7 +38,7 @@ public:
 
     virtual Spectrum Li(const RayDifferential &ray, const Scene &scene,
                         Sampler &sampler, MemoryArena &arena, const Point2i& pixel,
-                        const int iter) const;
+                        const int iter);
 
 protected:
     enum SamplingTech {
@@ -45,21 +47,23 @@ protected:
         SAMPLE_BSDF = 2
     };
 
-    virtual Light* SampleLight(const Scene &scene,
-        Sampler &sampler, const Distribution1D *lightDistrib, int* lightIdx) const;
+    virtual Spectrum SampleLightSurface(const Point2i& pixel, const Scene &scene, const Distribution1D *lightDistrib,
+        const Interaction &it, Sampler &sampler, SamplingTech tech);
 
-    virtual Spectrum SampleLightSurface(const Scene &scene, const Light& light,
-        const Interaction &it, Sampler &sampler, SamplingTech tech) const;
+    virtual Spectrum SampleBsdf(const Point2i& pixel, const Scene &scene, const Distribution1D *lightDistrib, const Interaction &it, Sampler &sampler);
 
-    virtual Spectrum SampleBsdf(const Scene &scene, const Interaction &it, Sampler &sampler) const;
+    virtual Float MisWeight(const Scene& scene, const Point2i& pixel, const Light* light, const Distribution1D *lightDistrib, SamplingTech tech, Float pdfBsdf, Float pdfLight);
 
-    virtual Float MisWeight(const Light* light, SamplingTech tech, Float pdfBsdf, Float pdfLight) const;
+    // Callback function invoked whenever an MC estimate is computed from any technique
+    virtual void LogContrib(const Point2i& pixel, const Spectrum& value, Float misWeight, SamplingTech tech);
 
 private:
     std::shared_ptr<Sampler> sampler;
     std::shared_ptr<const Camera> camera;
 
     std::unique_ptr<LightDistribution> guidedLightDistrib;
+
+    std::unordered_map<const Light *, size_t> lightToIdx;
 };
 
 GuidedDirectIllum *CreateGuidedDiIntegrator(

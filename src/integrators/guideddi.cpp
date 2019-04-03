@@ -29,6 +29,9 @@ void GuidedDirectIllum::Render(const Scene &scene) {
 
 void GuidedDirectIllum::SetUp(const Scene &scene) {
     guidedLightDistrib.reset(new SpatialLightDistribution(scene));
+
+    for (size_t i = 0; i < scene.lights.size(); ++i)
+        lightToIdx[scene.lights[i].get()] = i;
 }
 
 void GuidedDirectIllum::PrepareIteration(const Scene &scene, const int iter) {
@@ -124,7 +127,7 @@ void GuidedDirectIllum::WriteFinalImage() {
 
 Spectrum GuidedDirectIllum::Li(const RayDifferential &ray, const Scene &scene,
             Sampler &sampler, MemoryArena &arena, const Point2i& pixel,
-            const int iter) const
+            const int iter)
 {
     Spectrum L(0.f);
 
@@ -146,40 +149,30 @@ Spectrum GuidedDirectIllum::Li(const RayDifferential &ray, const Scene &scene,
 
     if (scene.lights.size() > 0) {
         const Distribution1D *lightDistr = guidedLightDistrib->Lookup(isect.p);
-        Float uniformSelPdf = 1 / Float(scene.lights.size());
-
-        int lightIdx;
-        Light* lightUniform = SampleLight(scene, sampler, nullptr, &lightIdx);
-        L += SampleLightSurface(scene, *lightUniform, isect, sampler, SAMPLE_UNIFORM) / uniformSelPdf;
-
-        Light* lightGuided = SampleLight(scene, sampler, lightDistr, &lightIdx);
-        Float guidedSelPdf = lightDistr->DiscretePDF(lightIdx);
-        L += SampleLightSurface(scene, *lightGuided, isect, sampler, SAMPLE_GUIDED) / guidedSelPdf;
-
-        L += SampleBsdf(scene, isect, sampler);
-
-        L += Spectrum(0);
+        L += SampleLightSurface(pixel, scene, lightDistr, isect, sampler, SAMPLE_UNIFORM);
+        L += SampleLightSurface(pixel, scene, lightDistr, isect, sampler, SAMPLE_GUIDED);
+        L += SampleBsdf(pixel, scene, lightDistr, isect, sampler);
     }
 
     return L;
 }
 
-Light* GuidedDirectIllum::SampleLight(const Scene &scene, Sampler &sampler,
-    const Distribution1D *lightDistrib, int* lightNum) const {
-    // Randomly choose a single light to sample
-    int nLights = int(scene.lights.size());
-    if (nLights == 0) return nullptr;
-    if (lightDistrib)
-        *lightNum = lightDistrib->SampleDiscrete(sampler.Get1D());
-    else
-        *lightNum = std::min((int)(sampler.Get1D() * nLights), nLights - 1);
-    return scene.lights[*lightNum].get();
-}
-
-Spectrum GuidedDirectIllum::SampleLightSurface(const Scene &scene, const Light& light,
-    const Interaction &it, Sampler &sampler, SamplingTech tech) const
+Spectrum GuidedDirectIllum::SampleLightSurface(const Point2i& pixel, const Scene &scene, const Distribution1D *lightDistrib,
+    const Interaction &it, Sampler &sampler, SamplingTech tech)
 {
     Spectrum L(0.0f);
+
+    // select a light source
+    int nLights = int(scene.lights.size());
+    int lightIdx;
+    Float lightSelectPdf;
+    if (tech == SAMPLE_GUIDED)
+        lightIdx = lightDistrib->SampleDiscrete(sampler.Get1D(), &lightSelectPdf);
+    else {
+        lightIdx = std::min((int)(sampler.Get1D() * nLights), nLights - 1);
+        lightSelectPdf = Float(1) / nLights;
+    }
+    Light& light = *(scene.lights[lightIdx].get());
 
     // sample point on the light
     Point2f uLight = sampler.Get2D();
@@ -216,10 +209,10 @@ Spectrum GuidedDirectIllum::SampleLightSurface(const Scene &scene, const Light& 
             // Add light's contribution to reflected radiance
             if (!Li.IsBlack()) {
                 if (IsDeltaLight(light.flags))
-                    L = f * Li / lightPdf;
+                    L = f * Li / (lightPdf * lightSelectPdf);
                 else {
-                    Float weight = MisWeight(&light, tech, scatteringPdf, lightPdf);
-                    L = f * Li * weight / lightPdf;
+                    Float weight = MisWeight(scene, pixel, &light, lightDistrib, tech, scatteringPdf, lightPdf);
+                    L = f * Li * weight / (lightPdf * lightSelectPdf);
                 }
             }
         }
@@ -227,7 +220,7 @@ Spectrum GuidedDirectIllum::SampleLightSurface(const Scene &scene, const Light& 
     return L;
 }
 
-Spectrum GuidedDirectIllum::SampleBsdf(const Scene &scene, const Interaction &it, Sampler &sampler) const {
+Spectrum GuidedDirectIllum::SampleBsdf(const Point2i& pixel, const Scene &scene, const Distribution1D *lightDistr, const Interaction &it, Sampler &sampler) {
     Point2f uScattering = sampler.Get2D();
 
     Spectrum f;
@@ -252,20 +245,17 @@ Spectrum GuidedDirectIllum::SampleBsdf(const Scene &scene, const Interaction &it
     }
 
     if (!f.IsBlack() && scatteringPdf > 0) {
-        // Account for light contributions along sampled direction _wi_
-
-        // Find intersection and compute transmittance
+        // Find intersection and check whether there is a light source
         SurfaceInteraction lightIsect;
         Ray ray = it.SpawnRay(wi);
-        bool foundSurfaceInteraction = scene.Intersect(ray, &lightIsect);
+        if (!scene.Intersect(ray, &lightIsect)) return Spectrum(0.f);
+        const Light* light = lightIsect.primitive->GetAreaLight();
+        if (light == nullptr) return Spectrum(0.f);
 
-        // Add light contribution from material sampling
-        Spectrum Li(0.f);
-        if (foundSurfaceInteraction) {
-            Li = lightIsect.Le(-wi);
-        }
-
-        Float weight = MisWeight(foundSurfaceInteraction ? lightIsect.primitive->GetAreaLight() : nullptr,
+        // Compute the contribution and MIS weights
+        Spectrum Li = lightIsect.Le(-wi);
+        lightPdf = light->Pdf_Li(it, wi);
+        Float weight = MisWeight(scene, pixel, light, lightDistr,
                                  SAMPLE_BSDF, scatteringPdf, lightPdf);
         return f * Li * weight / scatteringPdf;
     }
@@ -273,13 +263,40 @@ Spectrum GuidedDirectIllum::SampleBsdf(const Scene &scene, const Interaction &it
     return Spectrum(0.f);
 }
 
-Float GuidedDirectIllum::MisWeight(const Light* light, SamplingTech tech, Float pdfBsdf, Float pdfLight) const {
-    // TODO compute balance heuristic weights
-    // TODO implement logging of unweighted contribution
-    // TODO implement variance aware weights
-    // TODO implement optimal weights?
+Float GuidedDirectIllum::MisWeight(const Scene &scene, const Point2i& pixel, const Light* light, const Distribution1D *lightDistr,
+    SamplingTech tech, Float pdfBsdf, Float pdfLight) {
+    if (light == nullptr) return 0.; // needed for optimal mis
 
-    return 1.0f / 3.0f;
+    // compute light selection probabilities
+    Float uniformSelPdf = 1 / Float(scene.lights.size());
+    Float guidedSelPdf = lightDistr->DiscretePDF(lightToIdx[light]);
+
+    // compute effective sampling densities
+    Float effDensUni = pdfLight * uniformSelPdf;
+    Float effDensGuided = pdfLight * guidedSelPdf;
+    Float effDensBsdf = pdfBsdf;
+
+    // TODO if power: square
+
+    // TODO if our: multiply by relative moments
+
+    // TODO if uniform: set all to one
+
+    // TODO if single technique: set others to zero
+
+    Float sum = effDensUni + effDensGuided + effDensBsdf;
+
+    if (tech == SAMPLE_UNIFORM) {
+        return effDensUni / sum;
+    } else if (tech == SAMPLE_GUIDED) {
+        return effDensGuided / sum;
+    } else if (tech == SAMPLE_BSDF) {
+        return effDensBsdf / sum;
+    } else return 0.0f;
+}
+
+void GuidedDirectIllum::LogContrib(const Point2i& pixel, const Spectrum& value, Float misWeight, SamplingTech tech) {
+    // TODO log the contribution if this is the first iteration using our weights
 }
 
 GuidedDirectIllum *CreateGuidedDiIntegrator(const ParamSet &params, std::shared_ptr<Sampler> sampler,
