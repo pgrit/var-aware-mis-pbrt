@@ -25,6 +25,8 @@ public:
     // Computation should depend solely on the provided variance and mean.
     using ComputeFactorFn = std::function<Float(int, int, Float, Float)>;
 
+    // TODO / REFACTOR instead of film, pass width and height. Instead of min and maxDepth, pass number of techniques
+    // bdpt will then create multiple rectifier objects, one for each path length
     SAMISRectifier(const Film *film, int minDepth, int maxDepth, int downsamplingFactor,
                    bool considerMis, const ComputeFactorFn& computeFactor);
 

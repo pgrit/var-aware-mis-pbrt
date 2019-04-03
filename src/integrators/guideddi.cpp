@@ -7,17 +7,20 @@
 #include "progressreporter.h"
 #include "sampler.h"
 #include "camera.h"
+#include "imageio.h"
 
 namespace pbrt {
 
 void GuidedDirectIllum::Render(const Scene &scene) {
+    currentIteration = 0;
     SetUp(scene);
 
     // Determine the number of iterations based on the number of samples per pixel.
-    int numIter = sampler->samplesPerPixel;
+    numIterations = sampler->samplesPerPixel;
 
-    ProgressReporter reporter(numIter, "Rendering");
-    for (int iter = 0; iter < numIter; ++iter) {
+    ProgressReporter reporter(numIterations, "Rendering");
+    for (int iter = 0; iter < numIterations; ++iter) {
+        currentIteration = iter; // TODO remove this from the parameters of the following functions
         PrepareIteration(scene, iter);
         RenderIteration(scene, iter);
         ProcessIteration(scene, iter);
@@ -25,6 +28,9 @@ void GuidedDirectIllum::Render(const Scene &scene) {
     }
     reporter.Done();
     WriteFinalImage();
+
+    // TODO add flag to enable / disable
+    rectifier->WriteImages();
 }
 
 void GuidedDirectIllum::SetUp(const Scene &scene) {
@@ -32,6 +38,15 @@ void GuidedDirectIllum::SetUp(const Scene &scene) {
 
     for (size_t i = 0; i < scene.lights.size(); ++i)
         lightToIdx[scene.lights[i].get()] = i;
+
+    // TODO this is ugly, only works because the number of techniques here is also 3, as in bdpt
+    rectifier.reset(new SAMISRectifier(camera->film, 3, 3, 16, false,
+        [&](int d, int t, Float var, Float mean) {
+            if (var != 0 && mean != 0)
+                return 1 + mean * mean / var;
+            else
+                return Float(1);
+        })); // TODO support reciprocal variance as well
 }
 
 void GuidedDirectIllum::PrepareIteration(const Scene &scene, const int iter) {
@@ -103,7 +118,7 @@ void GuidedDirectIllum::RenderIteration(const Scene &scene, const int iter) {
 
             Spectrum L(0.f);
             if (rayWeight > 0)
-                L = Li(ray, scene, *tileSampler, arena, pixel, iter);
+                L = Li(ray, scene, *tileSampler, arena, cameraSample.pFilm, iter);
 
             filmTile->AddSample(cameraSample.pFilm, L, rayWeight);
 
@@ -116,17 +131,47 @@ void GuidedDirectIllum::RenderIteration(const Scene &scene, const int iter) {
 }
 
 void GuidedDirectIllum::ProcessIteration(const Scene &scene, const int iter) {
-    if (iter == 0) {
+    if (iter == 0) { // TODO if our is enabled
         // At the end of the first iteration, we finalize the variance estimates for MIS
+        rectifier->Prepare(1);
+
+        // Store the rendered image from the first iteration separately, it will be re-weighted!
+        prepassBuffer = camera->film->WriteImageToBuffer(1.0f);
+        camera->film->Clear();
     }
 }
 
 void GuidedDirectIllum::WriteFinalImage() {
-    camera->film->WriteImage();
+    // TODO if our is enabled
+
+    std::vector<Float> rectified = camera->film->WriteImageToBuffer(Float(1) / (numIterations - 1));
+
+    Float invSampleCount = Float(1) / numIterations;
+    Float weightPrepass = invSampleCount;
+    Float weightRectified =  (numIterations - 1) * invSampleCount;
+
+    size_t offset = 0;
+    for (Point2i px : camera->film->croppedPixelBounds) {
+        if (rectifier->IsMasked(px)) { // ignore the prepass
+            // out[offset + 0] = rectified[offset + 0];
+            // out[offset + 1] = rectified[offset + 1];
+            // out[offset + 2] = rectified[offset + 2];
+        } else { // average the two based on sample count
+            rectified[offset + 0] = prepassBuffer[offset + 0] * weightPrepass + rectified[offset + 0] * weightRectified;
+            rectified[offset + 1] = prepassBuffer[offset + 1] * weightPrepass + rectified[offset + 1] * weightRectified;
+            rectified[offset + 2] = prepassBuffer[offset + 2] * weightPrepass + rectified[offset + 2] * weightRectified;
+        }
+        offset += 3;
+    }
+
+    pbrt::WriteImage(camera->film->filename, rectified.data(), camera->film->croppedPixelBounds, camera->film->fullResolution);
+
+    // TODO else...
+    // camera->film->WriteImage();
 }
 
 Spectrum GuidedDirectIllum::Li(const RayDifferential &ray, const Scene &scene,
-            Sampler &sampler, MemoryArena &arena, const Point2i& pixel,
+            Sampler &sampler, MemoryArena &arena, const Point2f& pixel,
             const int iter)
 {
     Spectrum L(0.f);
@@ -157,7 +202,7 @@ Spectrum GuidedDirectIllum::Li(const RayDifferential &ray, const Scene &scene,
     return L;
 }
 
-Spectrum GuidedDirectIllum::SampleLightSurface(const Point2i& pixel, const Scene &scene, const Distribution1D *lightDistrib,
+Spectrum GuidedDirectIllum::SampleLightSurface(const Point2f& pixel, const Scene &scene, const Distribution1D *lightDistrib,
     const Interaction &it, Sampler &sampler, SamplingTech tech)
 {
     Spectrum L(0.0f);
@@ -212,7 +257,9 @@ Spectrum GuidedDirectIllum::SampleLightSurface(const Point2i& pixel, const Scene
                     L = f * Li / (lightPdf * lightSelectPdf);
                 else {
                     Float weight = MisWeight(scene, pixel, &light, lightDistrib, tech, scatteringPdf, lightPdf);
-                    L = f * Li * weight / (lightPdf * lightSelectPdf);
+                    Spectrum estimate = f * Li / (lightPdf * lightSelectPdf);
+                    L = weight * estimate;
+                    LogContrib(pixel, estimate, weight, tech);
                 }
             }
         }
@@ -220,7 +267,7 @@ Spectrum GuidedDirectIllum::SampleLightSurface(const Point2i& pixel, const Scene
     return L;
 }
 
-Spectrum GuidedDirectIllum::SampleBsdf(const Point2i& pixel, const Scene &scene, const Distribution1D *lightDistr, const Interaction &it, Sampler &sampler) {
+Spectrum GuidedDirectIllum::SampleBsdf(const Point2f& pixel, const Scene &scene, const Distribution1D *lightDistr, const Interaction &it, Sampler &sampler) {
     Point2f uScattering = sampler.Get2D();
 
     Spectrum f;
@@ -257,13 +304,15 @@ Spectrum GuidedDirectIllum::SampleBsdf(const Point2i& pixel, const Scene &scene,
         lightPdf = light->Pdf_Li(it, wi);
         Float weight = MisWeight(scene, pixel, light, lightDistr,
                                  SAMPLE_BSDF, scatteringPdf, lightPdf);
-        return f * Li * weight / scatteringPdf;
+        Spectrum estimate = f * Li / scatteringPdf;
+        LogContrib(pixel, estimate, weight, SAMPLE_BSDF);
+        return weight * estimate;
     }
 
     return Spectrum(0.f);
 }
 
-Float GuidedDirectIllum::MisWeight(const Scene &scene, const Point2i& pixel, const Light* light, const Distribution1D *lightDistr,
+Float GuidedDirectIllum::MisWeight(const Scene &scene, const Point2f& pixel, const Light* light, const Distribution1D *lightDistr,
     SamplingTech tech, Float pdfBsdf, Float pdfLight) {
     if (light == nullptr) return 0.; // needed for optimal mis
 
@@ -279,6 +328,12 @@ Float GuidedDirectIllum::MisWeight(const Scene &scene, const Point2i& pixel, con
     // TODO if power: square
 
     // TODO if our: multiply by relative moments
+    if (currentIteration > 0) {
+        Point2i pixelInt(pixel.x, pixel.y);
+        effDensUni    *= rectifier->Get(pixelInt, 3, SAMPLE_UNIFORM + 1);
+        effDensGuided *= rectifier->Get(pixelInt, 3, SAMPLE_GUIDED  + 1);
+        effDensBsdf   *= rectifier->Get(pixelInt, 3, SAMPLE_BSDF    + 1);
+    }
 
     // TODO if uniform: set all to one
 
@@ -295,8 +350,10 @@ Float GuidedDirectIllum::MisWeight(const Scene &scene, const Point2i& pixel, con
     } else return 0.0f;
 }
 
-void GuidedDirectIllum::LogContrib(const Point2i& pixel, const Spectrum& value, Float misWeight, SamplingTech tech) {
+void GuidedDirectIllum::LogContrib(const Point2f& pixel, const Spectrum& value, Float misWeight, SamplingTech tech) {
     // TODO log the contribution if this is the first iteration using our weights
+    if (currentIteration == 0)
+        rectifier->AddEstimate(pixel, 3, tech + 1, value, misWeight * value); // TODO refactor in SAMISRectifier: get rid of this + 1
 }
 
 GuidedDirectIllum *CreateGuidedDiIntegrator(const ParamSet &params, std::shared_ptr<Sampler> sampler,

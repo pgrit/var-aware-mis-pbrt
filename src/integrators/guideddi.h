@@ -11,6 +11,7 @@
 #include "integrator.h"
 #include "scene.h"
 #include "lightdistrib.h"
+#include "util/samis.h"
 
 #include <unordered_map>
 
@@ -37,7 +38,7 @@ public:
     virtual void WriteFinalImage();
 
     virtual Spectrum Li(const RayDifferential &ray, const Scene &scene,
-                        Sampler &sampler, MemoryArena &arena, const Point2i& pixel,
+                        Sampler &sampler, MemoryArena &arena, const Point2f& pixel,
                         const int iter);
 
 protected:
@@ -47,15 +48,15 @@ protected:
         SAMPLE_BSDF = 2
     };
 
-    virtual Spectrum SampleLightSurface(const Point2i& pixel, const Scene &scene, const Distribution1D *lightDistrib,
+    virtual Spectrum SampleLightSurface(const Point2f& pixel, const Scene &scene, const Distribution1D *lightDistrib,
         const Interaction &it, Sampler &sampler, SamplingTech tech);
 
-    virtual Spectrum SampleBsdf(const Point2i& pixel, const Scene &scene, const Distribution1D *lightDistrib, const Interaction &it, Sampler &sampler);
+    virtual Spectrum SampleBsdf(const Point2f& pixel, const Scene &scene, const Distribution1D *lightDistrib, const Interaction &it, Sampler &sampler);
 
-    virtual Float MisWeight(const Scene& scene, const Point2i& pixel, const Light* light, const Distribution1D *lightDistrib, SamplingTech tech, Float pdfBsdf, Float pdfLight);
+    virtual Float MisWeight(const Scene& scene, const Point2f& pixel, const Light* light, const Distribution1D *lightDistrib, SamplingTech tech, Float pdfBsdf, Float pdfLight);
 
     // Callback function invoked whenever an MC estimate is computed from any technique
-    virtual void LogContrib(const Point2i& pixel, const Spectrum& value, Float misWeight, SamplingTech tech);
+    virtual void LogContrib(const Point2f& pixel, const Spectrum& value, Float misWeight, SamplingTech tech);
 
 private:
     std::shared_ptr<Sampler> sampler;
@@ -64,6 +65,13 @@ private:
     std::unique_ptr<LightDistribution> guidedLightDistrib;
 
     std::unordered_map<const Light *, size_t> lightToIdx;
+
+    std::unique_ptr<SAMISRectifier> rectifier;
+
+    int numIterations;
+    int currentIteration;
+
+    std::vector<Float> prepassBuffer;
 };
 
 GuidedDirectIllum *CreateGuidedDiIntegrator(

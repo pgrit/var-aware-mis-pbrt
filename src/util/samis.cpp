@@ -22,6 +22,7 @@ SAMISRectifier::SAMISRectifier(const Film *film, int minDepth, int maxDepth, int
 void SAMISRectifier::AddEstimate(const Point2f &pixel, int pathLen, int technique,
                                  const Spectrum &unweightedEstimate, const Spectrum &weightedEstimate)
 {
+    // TODO assert that the factors are not yet finalized!
     if (pathLen < minDepth || pathLen > maxDepth)
         return;
 
