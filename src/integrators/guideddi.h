@@ -17,6 +17,18 @@
 
 namespace pbrt {
 
+enum OurMode {
+    OUR_DISABLED,
+    OUR_VARIANCE,
+    OUR_MOMENT
+};
+
+enum MisMode {
+    MIS_BALANCE,
+    MIS_POWER,
+    MIS_UNIFORM
+};
+
 // Same as DirectLighting integrator, but able to combine
 // multiple light selection strategies via MIS.
 // Mimics the implementation of the Optimal MIS paper [Kondapaneni et al. 2019]
@@ -24,8 +36,17 @@ namespace pbrt {
 class GuidedDirectIllum : public Integrator {
 public:
     GuidedDirectIllum(std::shared_ptr<Sampler> sampler,
-                      std::shared_ptr<const Camera> camera)
+                      std::shared_ptr<const Camera> camera,
+                      OurMode ourMode,
+                      MisMode misMode,
+                      bool enableBsdfSamples,
+                      bool enableGuided,
+                      bool enableUniform)
     : sampler(sampler), camera(camera)
+    , ourMode(ourMode), misMode(misMode)
+    , enableBsdfSamples(enableBsdfSamples)
+    , enableGuided(enableGuided)
+    , enableUniform(enableUniform)
     {
     }
 
@@ -47,6 +68,12 @@ protected:
         SAMPLE_GUIDED = 1,
         SAMPLE_BSDF = 2
     };
+
+    OurMode ourMode;
+    MisMode misMode;
+    bool enableBsdfSamples;
+    bool enableGuided;
+    bool enableUniform;
 
     virtual Spectrum SampleLightSurface(const Point2f& pixel, const Scene &scene, const Distribution1D *lightDistrib,
         const Interaction &it, Sampler &sampler, SamplingTech tech);

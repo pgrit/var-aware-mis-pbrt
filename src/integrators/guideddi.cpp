@@ -30,7 +30,8 @@ void GuidedDirectIllum::Render(const Scene &scene) {
     WriteFinalImage();
 
     // TODO add flag to enable / disable
-    rectifier->WriteImages();
+    if (ourMode != OUR_DISABLED)
+        rectifier->WriteImages();
 }
 
 void GuidedDirectIllum::SetUp(const Scene &scene) {
@@ -39,14 +40,14 @@ void GuidedDirectIllum::SetUp(const Scene &scene) {
     for (size_t i = 0; i < scene.lights.size(); ++i)
         lightToIdx[scene.lights[i].get()] = i;
 
-    // TODO this is ugly, only works because the number of techniques here is also 3, as in bdpt
-    rectifier.reset(new SAMISRectifier(camera->film, 3, 3, 16, false,
-        [&](int d, int t, Float var, Float mean) {
-            if (var != 0 && mean != 0)
-                return 1 + mean * mean / var;
-            else
-                return Float(1);
-        })); // TODO support reciprocal variance as well
+    if (ourMode != OUR_DISABLED)
+        rectifier.reset(new SAMISRectifier(camera->film, 3, 3, 16, false, // TODO this is ugly, only works because the number of techniques here is also 3, as in bdpt
+            [&](int d, int t, Float var, Float mean) {
+                if (var != 0 && mean != 0)
+                    return ourMode == OUR_VARIANCE ? (1 / var) : (1 + mean * mean / var);
+                else
+                    return Float(1);
+            }));
 }
 
 void GuidedDirectIllum::PrepareIteration(const Scene &scene, const int iter) {
@@ -131,7 +132,7 @@ void GuidedDirectIllum::RenderIteration(const Scene &scene, const int iter) {
 }
 
 void GuidedDirectIllum::ProcessIteration(const Scene &scene, const int iter) {
-    if (iter == 0) { // TODO if our is enabled
+    if (ourMode != OUR_DISABLED && iter == 0) {
         // At the end of the first iteration, we finalize the variance estimates for MIS
         rectifier->Prepare(1);
 
@@ -143,31 +144,30 @@ void GuidedDirectIllum::ProcessIteration(const Scene &scene, const int iter) {
 
 void GuidedDirectIllum::WriteFinalImage() {
     // TODO if our is enabled
+    if (ourMode != OUR_DISABLED) {
+        std::vector<Float> rectified = camera->film->WriteImageToBuffer(Float(1) / (numIterations - 1));
 
-    std::vector<Float> rectified = camera->film->WriteImageToBuffer(Float(1) / (numIterations - 1));
+        Float invSampleCount = Float(1) / numIterations;
+        Float weightPrepass = invSampleCount;
+        Float weightRectified =  (numIterations - 1) * invSampleCount;
 
-    Float invSampleCount = Float(1) / numIterations;
-    Float weightPrepass = invSampleCount;
-    Float weightRectified =  (numIterations - 1) * invSampleCount;
-
-    size_t offset = 0;
-    for (Point2i px : camera->film->croppedPixelBounds) {
-        if (rectifier->IsMasked(px)) { // ignore the prepass
-            // out[offset + 0] = rectified[offset + 0];
-            // out[offset + 1] = rectified[offset + 1];
-            // out[offset + 2] = rectified[offset + 2];
-        } else { // average the two based on sample count
-            rectified[offset + 0] = prepassBuffer[offset + 0] * weightPrepass + rectified[offset + 0] * weightRectified;
-            rectified[offset + 1] = prepassBuffer[offset + 1] * weightPrepass + rectified[offset + 1] * weightRectified;
-            rectified[offset + 2] = prepassBuffer[offset + 2] * weightPrepass + rectified[offset + 2] * weightRectified;
+        size_t offset = 0;
+        for (Point2i px : camera->film->croppedPixelBounds) {
+            if (rectifier->IsMasked(px)) { // ignore the prepass
+                // out[offset + 0] = rectified[offset + 0];
+                // out[offset + 1] = rectified[offset + 1];
+                // out[offset + 2] = rectified[offset + 2];
+            } else { // average the two based on sample count
+                rectified[offset + 0] = prepassBuffer[offset + 0] * weightPrepass + rectified[offset + 0] * weightRectified;
+                rectified[offset + 1] = prepassBuffer[offset + 1] * weightPrepass + rectified[offset + 1] * weightRectified;
+                rectified[offset + 2] = prepassBuffer[offset + 2] * weightPrepass + rectified[offset + 2] * weightRectified;
+            }
+            offset += 3;
         }
-        offset += 3;
-    }
 
-    pbrt::WriteImage(camera->film->filename, rectified.data(), camera->film->croppedPixelBounds, camera->film->fullResolution);
-
-    // TODO else...
-    // camera->film->WriteImage();
+        pbrt::WriteImage(camera->film->filename, rectified.data(), camera->film->croppedPixelBounds, camera->film->fullResolution);
+    } else
+        camera->film->WriteImage();
 }
 
 Spectrum GuidedDirectIllum::Li(const RayDifferential &ray, const Scene &scene,
@@ -325,19 +325,31 @@ Float GuidedDirectIllum::MisWeight(const Scene &scene, const Point2f& pixel, con
     Float effDensGuided = pdfLight * guidedSelPdf;
     Float effDensBsdf = pdfBsdf;
 
-    // TODO if power: square
+    // if power: square
+    if (misMode == MIS_POWER) {
+        effDensUni *= effDensUni;
+        effDensGuided *= effDensGuided;
+        effDensBsdf *= effDensBsdf;
+    }
 
-    // TODO if our: multiply by relative moments
-    if (currentIteration > 0) {
+    // if uniform: set all to one
+    if (misMode == MIS_UNIFORM) {
+        effDensUni = 1;
+        effDensGuided = 1;
+        effDensBsdf = 1;
+    }
+
+    if (!enableUniform) effDensUni = 0;
+    if (!enableGuided) effDensGuided = 0;
+    if (!enableBsdfSamples) effDensBsdf = 0;
+
+    // if our: multiply by relative moments
+    if (ourMode != OUR_DISABLED && currentIteration > 0) {
         Point2i pixelInt(pixel.x, pixel.y);
         effDensUni    *= rectifier->Get(pixelInt, 3, SAMPLE_UNIFORM + 1);
         effDensGuided *= rectifier->Get(pixelInt, 3, SAMPLE_GUIDED  + 1);
         effDensBsdf   *= rectifier->Get(pixelInt, 3, SAMPLE_BSDF    + 1);
     }
-
-    // TODO if uniform: set all to one
-
-    // TODO if single technique: set others to zero
 
     Float sum = effDensUni + effDensGuided + effDensBsdf;
 
@@ -351,15 +363,45 @@ Float GuidedDirectIllum::MisWeight(const Scene &scene, const Point2f& pixel, con
 }
 
 void GuidedDirectIllum::LogContrib(const Point2f& pixel, const Spectrum& value, Float misWeight, SamplingTech tech) {
-    // TODO log the contribution if this is the first iteration using our weights
-    if (currentIteration == 0)
+    // log the contribution if this is the first iteration using our weights
+    if (ourMode != OUR_DISABLED && currentIteration == 0)
         rectifier->AddEstimate(pixel, 3, tech + 1, value, misWeight * value); // TODO refactor in SAMISRectifier: get rid of this + 1
 }
 
 GuidedDirectIllum *CreateGuidedDiIntegrator(const ParamSet &params, std::shared_ptr<Sampler> sampler,
                                             std::shared_ptr<const Camera> camera)
 {
-    return new GuidedDirectIllum(sampler, camera);
+    OurMode ourMode;
+    std::string str = params.FindOneString("varmode", "moment");
+    if (str == "moment") {
+        ourMode = OUR_MOMENT;
+    } else if (str == "variance") {
+        ourMode = OUR_VARIANCE;
+    } else if (str == "disabled") {
+        ourMode = OUR_DISABLED;
+    } else {
+        ourMode = OUR_MOMENT;
+        Warning("Unknown \"varmode\" specified, defaulting to \"moment\"");
+    }
+
+    MisMode misMode;
+    str = params.FindOneString("mis", "balance");
+    if (str == "balance") {
+        misMode = MIS_BALANCE;
+    } else if (str == "power") {
+        misMode = MIS_POWER;
+    } else if (str == "uniform") {
+        misMode = MIS_UNIFORM;
+    } else {
+        misMode = MIS_BALANCE;
+        Warning("Unknown \"varmode\" specified, defaulting to \"balance\"");
+    }
+
+    bool enableBsdfSamples = params.FindOneBool("enablebsdf", true);
+    bool enableGuided = params.FindOneBool("enableguided", true);
+    bool enableUniform = params.FindOneBool("enableuniform", true);
+
+    return new GuidedDirectIllum(sampler, camera, ourMode, misMode, enableBsdfSamples, enableGuided, enableUniform);
 }
 
 
