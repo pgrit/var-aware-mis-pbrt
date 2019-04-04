@@ -29,8 +29,7 @@ void GuidedDirectIllum::Render(const Scene &scene) {
     reporter.Done();
     WriteFinalImage();
 
-    // TODO add flag to enable / disable
-    if (ourMode != OUR_DISABLED)
+    if (ourMode != OUR_DISABLED && visWeights)
         rectifier->WriteImages();
 }
 
@@ -400,8 +399,10 @@ GuidedDirectIllum *CreateGuidedDiIntegrator(const ParamSet &params, std::shared_
     bool enableBsdfSamples = params.FindOneBool("enablebsdf", true);
     bool enableGuided = params.FindOneBool("enableguided", true);
     bool enableUniform = params.FindOneBool("enableuniform", true);
+    bool visWeights = params.FindOneBool("visualizefactors", false);
 
-    return new GuidedDirectIllum(sampler, camera, ourMode, misMode, enableBsdfSamples, enableGuided, enableUniform);
+    return new GuidedDirectIllum(sampler, camera, ourMode, misMode, enableBsdfSamples,
+                                 enableGuided, enableUniform, visWeights);
 }
 
 

@@ -41,12 +41,14 @@ public:
                       MisMode misMode,
                       bool enableBsdfSamples,
                       bool enableGuided,
-                      bool enableUniform)
+                      bool enableUniform,
+                      bool visWeights)
     : sampler(sampler), camera(camera)
     , ourMode(ourMode), misMode(misMode)
     , enableBsdfSamples(enableBsdfSamples)
     , enableGuided(enableGuided)
     , enableUniform(enableUniform)
+    , visWeights(visWeights)
     {
     }
 
@@ -74,6 +76,7 @@ protected:
     bool enableBsdfSamples;
     bool enableGuided;
     bool enableUniform;
+    bool visWeights;
 
     virtual Spectrum SampleLightSurface(const Point2f& pixel, const Scene &scene, const Distribution1D *lightDistrib,
         const Interaction &it, Sampler &sampler, SamplingTech tech);
