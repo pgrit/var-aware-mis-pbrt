@@ -40,7 +40,7 @@ void GuidedDirectIllum::SetUp(const Scene &scene) {
         lightToIdx[scene.lights[i].get()] = i;
 
     if (ourMode != OUR_DISABLED)
-        rectifier.reset(new SAMISRectifier(camera->film, 3, 3, 16, false, // TODO this is ugly, only works because the number of techniques here is also 3, as in bdpt
+        rectifier.reset(new SAMISRectifier(camera->film, 3, 3, downsamplingFactor, false, // TODO this is ugly, only works because the number of techniques here is also 3, as in bdpt
             [&](int d, int t, Float var, Float mean) {
                 if (var != 0 && mean != 0)
                     return ourMode == OUR_VARIANCE ? (1 / var) : (1 + mean * mean / var);
@@ -133,7 +133,7 @@ void GuidedDirectIllum::RenderIteration(const Scene &scene, const int iter) {
 void GuidedDirectIllum::ProcessIteration(const Scene &scene, const int iter) {
     if (ourMode != OUR_DISABLED && iter == 0) {
         // At the end of the first iteration, we finalize the variance estimates for MIS
-        rectifier->Prepare(1);
+        rectifier->Prepare(1, weightThreshold);
 
         // Store the rendered image from the first iteration separately, it will be re-weighted!
         prepassBuffer = camera->film->WriteImageToBuffer(1.0f);
@@ -193,9 +193,12 @@ Spectrum GuidedDirectIllum::Li(const RayDifferential &ray, const Scene &scene,
 
     if (scene.lights.size() > 0) {
         const Distribution1D *lightDistr = guidedLightDistrib->Lookup(isect.p);
-        L += SampleLightSurface(pixel, scene, lightDistr, isect, sampler, SAMPLE_UNIFORM);
-        L += SampleLightSurface(pixel, scene, lightDistr, isect, sampler, SAMPLE_GUIDED);
-        L += SampleBsdf(pixel, scene, lightDistr, isect, sampler);
+        if (enableUniform)
+            L += SampleLightSurface(pixel, scene, lightDistr, isect, sampler, SAMPLE_UNIFORM);
+        if (enableGuided)
+            L += SampleLightSurface(pixel, scene, lightDistr, isect, sampler, SAMPLE_GUIDED);
+        if (enableBsdfSamples)
+            L += SampleBsdf(pixel, scene, lightDistr, isect, sampler);
     }
 
     return L;
@@ -400,9 +403,12 @@ GuidedDirectIllum *CreateGuidedDiIntegrator(const ParamSet &params, std::shared_
     bool enableGuided = params.FindOneBool("enableguided", true);
     bool enableUniform = params.FindOneBool("enableuniform", true);
     bool visWeights = params.FindOneBool("visualizefactors", false);
+    int downsamplingFactor = params.FindOneInt("downsamplingfactor", 16);
+    Float weightThreshold = params.FindOneFloat("weightthreshold", 16);
 
     return new GuidedDirectIllum(sampler, camera, ourMode, misMode, enableBsdfSamples,
-                                 enableGuided, enableUniform, visWeights);
+                                 enableGuided, enableUniform, visWeights, downsamplingFactor,
+                                 weightThreshold);
 }
 
 

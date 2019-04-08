@@ -36,7 +36,7 @@ public:
     // Fixes the buffers and prepares them for use during MIS computation.
     // Applies filtering, outlier removal, etc.
     // For on-line refinement, this could be implemented via double-buffering.
-    void Prepare(int sampleCount);
+    void Prepare(int sampleCount, Float threshold);
 
     // Writes images with the stratification factors to .exr files for debugging purposes
     void WriteImages();

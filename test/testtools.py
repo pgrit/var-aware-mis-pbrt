@@ -1,4 +1,8 @@
 import re
+import os
+import glob
+import subprocess
+from subprocess import Popen, PIPE
 
 # generates the string with the selected integrator
 def set_integrator(scene, integrator_str):
@@ -14,6 +18,13 @@ def set_sampler(scene, sampler_str):
     replacement = sampler_str
     match = re.match(r'(.+%s\s*).+?(\s*%s.+)' % (start, end), scene, re.DOTALL)
     return match.group(1) + replacement + match.group(2)
+
+def run_and_time(args, workingDir):
+    p = Popen(args, cwd=workingDir, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    output, err = p.communicate()
+    match = re.search(r'\+\+\]  \((\d+\.\d+)s\)', output.decode('utf-8'))
+    time = float(match.group(1))
+    return time
 
 def run_tests(ref_name, ref_integrator, ref_sampler, tester_fn, scenes):
     filenames = []
@@ -36,7 +47,7 @@ def run_tests(ref_name, ref_integrator, ref_sampler, tester_fn, scenes):
 
         filenames.append(refpath)
 
-        filenames.extend(tester_fn(scene_name, scene_desc))
+        filenames.extend(tester_fn(scene_name, scene, scene_path))
 
     return filenames
 
@@ -50,4 +61,4 @@ def show_results(filenames):
         # tev was not found. Maybe we are on WSL and tev is a Windows .exe?
         viewer = ['tev.exe']
         viewer += filenames
-        subprocess.call()
+        subprocess.call(viewer)

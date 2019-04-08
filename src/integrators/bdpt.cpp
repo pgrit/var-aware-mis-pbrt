@@ -573,7 +573,7 @@ renderIterFn(sampler->samplesPerPixel, 0, "Iteration 1", enableRectification, fa
     // renderIterFn(1, 0, "Iteration 1", enableRectification, false);
 
     if (enableRectification)
-        rectifier->Prepare(1);
+        rectifier->Prepare(1, 16); // TODO make threshold programmable
 
     // Rendering with rectified weights
     // renderIterFn(sampler->samplesPerPixel - 1, 1, "Iterations 2 to " + std::to_string(sampler->samplesPerPixel), false,

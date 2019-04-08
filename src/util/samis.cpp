@@ -37,7 +37,7 @@ void SAMISRectifier::AddEstimate(const Point2f &pixel, int pathLen, int techniqu
     AtomicAdd(techImages[pathLen - minDepth][technique - 1][index], estim.y());
 }
 
-void SAMISRectifier::Prepare(int sampleCount) {
+void SAMISRectifier::Prepare(int sampleCount, Float threshold) {
     const Float invSamples = 1.0f / sampleCount;
     for (int d = minDepth; d <= maxDepth; ++d) {
         stratFactors.emplace_back(d, std::vector<float>(reducedWidth * reducedHeight, 0.0f));
@@ -82,7 +82,7 @@ void SAMISRectifier::Prepare(int sampleCount) {
             auto &s = stratFactors[d - minDepth][t - 1][y * reducedWidth + x];
             maxval = std::max(maxval, float(s));
         }
-        prepassMask[y * reducedWidth + x] = maxval > 4; // TODO make threshold programmable
+        prepassMask[y * reducedWidth + x] = maxval > threshold; // TODO make threshold programmable
     }
 }
 
@@ -107,13 +107,26 @@ Float SAMISRectifier::Get(const Point2i &pixel, int pathLen, int technique) cons
     if (pathLen < minDepth || pathLen > maxDepth)
         return 1.0f;
 
-    // TODO add bilinear interpolation
+    // look up with bilinear interpolation
 
-    const int x = std::max(std::min(int(pixel.x / downsamplingFactor), reducedWidth - 1), 0);
-    const int y = std::max(std::min(int(pixel.y / downsamplingFactor), reducedHeight - 1), 0);
-    const int index = y * reducedWidth + x;
+    const int x0 = std::max(std::min(int(pixel.x / downsamplingFactor), reducedWidth - 1), 0);
+    const int y0 = std::max(std::min(int(pixel.y / downsamplingFactor), reducedHeight - 1), 0);
 
-    return stratFactors[pathLen - minDepth][technique - 1][index];
+    const int x1 = std::max(std::min(x0 + 1, reducedWidth - 1), 0);
+    const int y1 = std::max(std::min(y0 + 1, reducedHeight - 1), 0);
+
+    const Float tx = Float(pixel.x) / downsamplingFactor - x0;
+    const Float ty = Float(pixel.y) / downsamplingFactor - y0;
+
+    auto& buffer = stratFactors[pathLen - minDepth][technique - 1];
+    const Float f00 = buffer[y0 * reducedWidth + x0];
+    const Float f10 = buffer[y0 * reducedWidth + x1];
+    const Float f01 = buffer[y1 * reducedWidth + x0];
+    const Float f11 = buffer[y1 * reducedWidth + x1];
+
+    Float vlo = Lerp(tx, f00, f10);
+    Float vhi = Lerp(tx, f01, f11);
+    return Lerp(ty, vlo, vhi);
 }
 
 bool SAMISRectifier::IsMasked(const Point2i &pixel) const {
