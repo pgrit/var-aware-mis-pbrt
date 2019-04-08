@@ -8,7 +8,6 @@ for the paper. The results will be similar but not identical.
 The implementation required minor changes in the bidirectional path tracer integrator
 (`src/integrators/bdpt.cpp` and `bdpt.h`) to separate the rendering into multiple iterations
 and to look-up and multiply with the propper stratification factors during the MIS computation.
-The respecitive lines of code are tagged with a "for stratification-aware MIS" comment.
 Furthermore, the weighted combination of the first iteration with the following one also
 required a small addition to the `Film` class in `src/core/film.cpp` and `src/core/film.h`.
 

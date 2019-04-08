@@ -142,19 +142,19 @@ void Film::SetImage(const Spectrum *img) const {
 void Film::AddSplat(const Point2f &p, Spectrum v) {
     ProfilePhase pp(Prof::SplatFilm);
 
-    if (v.HasNaNs()) {
-        LOG(ERROR) << StringPrintf("Ignoring splatted spectrum with NaN values "
-                                   "at (%f, %f)", p.x, p.y);
-        return;
-    } else if (v.y() < 0.) {
-        LOG(ERROR) << StringPrintf("Ignoring splatted spectrum with negative "
-                                   "luminance %f at (%f, %f)", v.y(), p.x, p.y);
-        return;
-    } else if (std::isinf(v.y())) {
-        LOG(ERROR) << StringPrintf("Ignoring splatted spectrum with infinite "
-                                   "luminance at (%f, %f)", p.x, p.y);
-        return;
-    }
+    // if (v.HasNaNs()) {
+    //     LOG(ERROR) << StringPrintf("Ignoring splatted spectrum with NaN values "
+    //                                "at (%f, %f)", p.x, p.y);
+    //     return;
+    // } else if (v.y() < 0.) {
+    //     LOG(ERROR) << StringPrintf("Ignoring splatted spectrum with negative "
+    //                                "luminance %f at (%f, %f)", v.y(), p.x, p.y);
+    //     return;
+    // } else if (std::isinf(v.y())) {
+    //     LOG(ERROR) << StringPrintf("Ignoring splatted spectrum with infinite "
+    //                                "luminance at (%f, %f)", p.x, p.y);
+    //     return;
+    // }
 
     if (!InsideExclusive((Point2i)p, croppedPixelBounds)) return;
     if (v.y() > maxSampleLuminance)

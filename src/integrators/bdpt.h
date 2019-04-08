@@ -125,26 +125,22 @@ inline Float InfiniteLightDensity(
     return pdf / (lightDistr.funcInt * lightDistr.Count());
 }
 
+
 // BDPT Declarations
 class BDPTIntegrator : public Integrator {
   public:
-    // Selected strategy when computing the additional factors for MIS
-    // See the corresponding implementations in Render() for the math
+    // Describes how to modify the effective densities during MIS computations
     enum MisStrategy {
-        Balance,
-        Power,
-        Variance,
-        RelativeVariance,
-        RelativeDeviation,
-        RelVarPlusOne,
-        RecipVarPlusOne,
-        MomentOverVar
+        MIS_BALANCE, // none, default
+        MIS_POWER, // raise to power of two
+        MIS_UNIFORM // set all to one
     };
 
-    // Supported modes for the weighting process
-    enum WeightingMode {
-        Injected, // Apply directly inside the MIS weighting function
-        ReWeighted // Re-weight the balance weighted estimates
+    // Selected strategy when computing the additional factors for MIS
+    enum MisModification {
+        MIS_MOD_NONE, // Veach-style MIS
+        MIS_MOD_RECIPROCAL_VARIANCE, // Multiply effective densities with reciprocal variance
+        MIS_MOD_MOMENT_OVER_VARIANCE // Multiply with our approach: moment over variance
     };
 
     // BDPTIntegrator Public Methods
@@ -153,14 +149,13 @@ class BDPTIntegrator : public Integrator {
                    bool visualizeStrategies, bool visualizeWeights,
                    const Bounds2i &pixelBounds,
                    const std::string &lightSampleStrategy = "power",
-                   MisStrategy misStrategy = MomentOverVar,
-                   WeightingMode weightingMode = Injected,
+                   MisStrategy misStrategy = MIS_BALANCE,
+                   MisModification misMod = MIS_MOD_MOMENT_OVER_VARIANCE,
                    int rectiMinDepth = 1,
                    int rectiMaxDepth = 1,
                    int downsamplingFactor = 8,
-                   bool useVarianceOfWeightedTechniques = false,
                    bool visualizeFactors = true,
-                   bool forceLtOne = false)
+                   Float clampThreshold = 16)
         : sampler(sampler),
           camera(camera),
           maxDepth(maxDepth),
@@ -169,13 +164,13 @@ class BDPTIntegrator : public Integrator {
           pixelBounds(pixelBounds),
           lightSampleStrategy(lightSampleStrategy),
           misStrategy(misStrategy),
-          weightingMode(weightingMode),
+          misMod(misMod),
           rectiMinDepth(rectiMinDepth+2),
           rectiMaxDepth(rectiMaxDepth+2),
           downsamplingFactor(downsamplingFactor),
-          useVarianceOfWeightedTechniques(useVarianceOfWeightedTechniques),
           visualizeFactors(visualizeFactors),
-          forceLtOne(forceLtOne) {}
+          clampThreshold(clampThreshold)
+        {}
 
     void Render(const Scene &scene);
 
@@ -189,13 +184,12 @@ class BDPTIntegrator : public Integrator {
     const Bounds2i pixelBounds;
     const std::string lightSampleStrategy;
     const MisStrategy misStrategy;
-    const WeightingMode weightingMode;
+    const MisModification misMod;
     const int rectiMinDepth;
     const int rectiMaxDepth;
     const int downsamplingFactor;
-    const bool useVarianceOfWeightedTechniques;
     const bool visualizeFactors;
-    const bool forceLtOne;
+    const Float clampThreshold;
 };
 
 struct Vertex {
@@ -484,7 +478,8 @@ Spectrum ConnectBDPT(
     int t, const Distribution1D &lightDistr,
     const std::unordered_map<const Light *, size_t> &lightToIndex,
     const Camera &camera, Sampler &sampler, Point2f *pRaster,
-    Float *misWeight = nullptr, const SAMISRectifier *rectifier = nullptr);
+    Float *misWeight = nullptr, const SAMISRectifier *rectifier = nullptr,
+    BDPTIntegrator::MisStrategy misStrategy = BDPTIntegrator::MIS_BALANCE);
 BDPTIntegrator *CreateBDPTIntegrator(const ParamSet &params,
                                      std::shared_ptr<Sampler> sampler,
                                      std::shared_ptr<const Camera> camera);

@@ -119,6 +119,7 @@ Float SAMISRectifier::Get(const Point2i &pixel, int pathLen, int technique) cons
     const Float ty = Float(pixel.y) / downsamplingFactor - y0;
 
     auto& buffer = stratFactors[pathLen - minDepth][technique - 1];
+
     const Float f00 = buffer[y0 * reducedWidth + x0];
     const Float f10 = buffer[y0 * reducedWidth + x1];
     const Float f01 = buffer[y1 * reducedWidth + x0];

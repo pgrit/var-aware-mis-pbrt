@@ -22,9 +22,10 @@ def set_sampler(scene, sampler_str):
 def run_and_time(args, workingDir):
     p = Popen(args, cwd=workingDir, stdin=PIPE, stdout=PIPE, stderr=PIPE)
     output, err = p.communicate()
-    match = re.search(r'\+\+\]  \((\d+\.\d+)s\)', output.decode('utf-8'))
-    time = float(match.group(1))
-    return time
+    times = re.findall(r'\+\+\]  \((\d+\.\d+)s\)', output.decode('utf-8'))
+    import numpy as np
+    times = np.array(times, dtype=np.float32)
+    return np.sum(times)
 
 def run_tests(ref_name, ref_integrator, ref_sampler, tester_fn, scenes):
     filenames = []
