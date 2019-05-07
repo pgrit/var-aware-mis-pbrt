@@ -62,17 +62,12 @@ nouniform = ' "bool enableuniform" "false" '
 
 # different integrator configurations to test
 variants = {
-    'balance': balance + vanilla + nobsdf,
-    'power': power + vanilla + nobsdf,
-    'nomis': nomis + vanilla + nobsdf,
-    # 'nobsdf-recipvar': balance + variance + nobsdf,
-    'our-balance': balance + moment + nobsdf,
-    'recipvar-only': nomis + variance + nobsdf,
-    # 'nobsdf-moment-only': nomis + moment + nobsdf,
-    # 'nobsdf-recipvar-power': power + variance + nobsdf,
-    'our-power': power + moment + nobsdf,
-    # 'noguided-power': power + vanilla + noguided,
-    # 'noguided-moment-power': power + moment + noguided,
+    'defsampling-balance': balance + vanilla + nobsdf,
+    'defsampling-power': power + vanilla + nobsdf,
+    'defsampling-nomis': nomis + vanilla + nobsdf,
+    'defsampling-our-balance': balance + moment + nobsdf,
+    'defsampling-recipvar-only': nomis + variance + nobsdf,
+    'defsampling-our-power': power + moment + nobsdf,
 }
 
 def di_tester(scene_name, scene, scene_path):
@@ -125,7 +120,6 @@ def di_tester(scene_name, scene, scene_path):
             f.write(sc)
         time = run_and_time(['../../' + optimal_mis_executable, '../../' + scene_path + 'scene.pbrtgen', '--outfile', 'balance.exr'], workingDir, repeats=benchmarkRepeats)
         print('time for optimal (balance): ' + str(time[0]) + ' s (+- ' + str(time[1]) + ' s)')
-
 
         # render with the ideal optimal weights
         # sc = set_integrator(scene, optimal_mis_ideal)

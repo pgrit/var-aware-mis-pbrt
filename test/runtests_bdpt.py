@@ -32,15 +32,12 @@ nomis = ' "string misstrategy" "uniform" '
 
 # different integrator configurations to test
 variants = {
-    'balance': balance + vanilla,
-    'power': power + vanilla,
-    'nomis': nomis + vanilla,
-    # 'recipvar': balance + variance,
-    'our-balance': balance + moment,
-    'recipvar-only': nomis + variance,
-    # 'moment-only': nomis + moment,
-    # 'recipvar-power': power + variance,
-    'our-power': power + moment,
+    'bdpt-balance': balance + vanilla,
+    'bdpt-power': power + vanilla,
+    'bdpt-nomis': nomis + vanilla,
+    'bdpt-our-balance': balance + moment,
+    'bdpt-recipvar-only': nomis + variance,
+    'bdpt-our-power': power + moment,
 }
 
 scenes = {
@@ -67,31 +64,31 @@ def bidir_tester(scene_name, scene, scene_path):
     print('==============================')
     filenames = []
     # test all configurations
-    # for vname, vparams in variants.items():
-    #     workingDir = './' + scene_name + '/' + vname
-    #     if not os.path.exists(workingDir):
-    #         os.makedirs(workingDir)
+    for vname, vparams in variants.items():
+        workingDir = './' + scene_name + '/' + vname
+        if not os.path.exists(workingDir):
+            os.makedirs(workingDir)
 
-    #     # delete images from old runs
-    #     for f in glob.glob(workingDir + '/' + '*.exr'):
-    #         os.remove(f)
+        # delete images from old runs
+        for f in glob.glob(workingDir + '/' + '*.exr'):
+            os.remove(f)
 
-    #     sc = set_integrator(scene, bdpt_integrator + vparams)
-    #     sc = set_sampler(sc, experiment_sampler)
-    #     with open(scene_path + 'scene.pbrtgen', 'w') as f:
-    #         f.write(sc)
-    #     time = run_and_time(['../../pbrt', '../../' + scene_path + 'scene.pbrtgen', '--outfile', 'img.exr'], workingDir, repeats=benchmarkRepeats)
-    #     print(vname + ' took ' + str(time[0]) + ' s (+- ' + str(time[1]) + ' s)')
+        sc = set_integrator(scene, bdpt_integrator + vparams)
+        sc = set_sampler(sc, experiment_sampler)
+        with open(scene_path + 'scene.pbrtgen', 'w') as f:
+            f.write(sc)
+        time = run_and_time(['../../pbrt', '../../' + scene_path + 'scene.pbrtgen', '--outfile', 'img.exr'], workingDir, repeats=benchmarkRepeats)
+        print(vname + ' took ' + str(time[0]) + ' s (+- ' + str(time[1]) + ' s)')
 
-    #     sc = set_integrator(scene, bdpt_integrator_di + vparams)
-    #     sc = set_sampler(sc, experiment_sampler)
-    #     with open(scene_path + 'scene.pbrtgen', 'w') as f:
-    #         f.write(sc)
-    #     time = run_and_time(['../../pbrt', '../../' + scene_path + 'scene.pbrtgen', '--outfile', 'img.exr'], workingDir, repeats=benchmarkRepeats)
-    #     print(vname + ' (direct illum. only) took ' + str(time[0]) + ' s (+- ' + str(time[1]) + ' s)')
+        sc = set_integrator(scene, bdpt_integrator_di + vparams)
+        sc = set_sampler(sc, experiment_sampler)
+        with open(scene_path + 'scene.pbrtgen', 'w') as f:
+            f.write(sc)
+        time = run_and_time(['../../pbrt', '../../' + scene_path + 'scene.pbrtgen', '--outfile', 'direct-only.exr'], workingDir, repeats=benchmarkRepeats)
+        print(vname + ' (direct illum. only) took ' + str(time[0]) + ' s (+- ' + str(time[1]) + ' s)')
 
-    #     imgs = glob.glob(workingDir + '/' + '*.exr')
-    #     filenames.extend(imgs)
+        imgs = glob.glob(workingDir + '/' + '*.exr')
+        filenames.extend(imgs)
 
     # path tracer equal sample and equal iteration baseline comparisons
     workingDir = './' + scene_name + '/path'
@@ -113,7 +110,7 @@ def bidir_tester(scene_name, scene, scene_path):
     sc = set_sampler(sc, double_sampler)
     with open(scene_path + 'scene.pbrtgen', 'w') as f:
         f.write(sc)
-    time = run_and_time(['../../pbrt', '../../' + scene_path + 'scene.pbrtgen', '--outfile', 'path-double.exr'], workingDir, repeats=benchmarkRepeats)
+    time = run_and_time(['../../pbrt', '../../' + scene_path + 'scene.pbrtgen', '--outfile', 'path-double-direct-only.exr'], workingDir, repeats=benchmarkRepeats)
     print('path tracer (double, direct illum. only) took ' + str(time[0]) + ' s (+- ' + str(time[1]) + ' s)')
 
     sc = set_integrator(scene, pt_integrator)
@@ -127,7 +124,7 @@ def bidir_tester(scene_name, scene, scene_path):
     sc = set_sampler(sc, experiment_sampler)
     with open(scene_path + 'scene.pbrtgen', 'w') as f:
         f.write(sc)
-    time = run_and_time(['../../pbrt', '../../' + scene_path + 'scene.pbrtgen', '--outfile', 'path-same.exr'], workingDir, repeats=benchmarkRepeats)
+    time = run_and_time(['../../pbrt', '../../' + scene_path + 'scene.pbrtgen', '--outfile', 'path-same-direct-only.exr'], workingDir, repeats=benchmarkRepeats)
     print('path tracer (same, direct illum. only) took ' + str(time[0]) + ' s (+- ' + str(time[1]) + ' s)')
 
     imgs = glob.glob(workingDir + '/' + '*.exr')

@@ -48,7 +48,6 @@ for f in filenames:
         exposure = 2.0
 
     tmapped = lin_to_srgb(img * pow(2, exposure))
-
     scipy.misc.toimage(tmapped, cmin=0.0, cmax=1.0).save(fnamePng)
 
     # generate the insets for each file
@@ -59,15 +58,26 @@ for f in filenames:
 
     # first inset
     if 'bathroom' in f:
-        left = 87
-        top = 375
-        w = 73
-        h = 73
+        left = 600
+        top = 110
+        w = 100
+        h = 100
+        exposure = -1.0
 
     fnameInset1 = fnamePng.replace('.png', '-inset1.png')
 
     tmapped = lin_to_srgb(img[top:top+h,left:left+w,:] * pow(2, exposure))
-
     scipy.misc.toimage(tmapped, cmin=0.0, cmax=1.0).save(fnameInset1)
 
     # second inset
+    if 'bathroom' in f:
+        left = 260
+        top = 520
+        w = 100
+        h = 100
+        exposure = 0.0
+
+    fnameInset2 = fnamePng.replace('.png', '-inset2.png')
+
+    tmapped = lin_to_srgb(img[top:top+h,left:left+w,:] * pow(2, exposure))
+    scipy.misc.toimage(tmapped, cmin=0.0, cmax=1.0).save(fnameInset2)
