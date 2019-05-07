@@ -34,6 +34,48 @@ for name in filenames:
 for name in factorImages:
     filenames.remove(name)
 
+# separate the reference images for error computation
+refGlobal = {}
+refDirect = {}
+for name in filenames:
+    if 'ref-bdpt' in name:
+        buffer = refGlobal
+    elif 'ref-di' in name:
+        buffer = refDirect
+    else:
+        continue
+
+    if 'bathroom' in name:
+        buffer['bathroom'] = pyexr.read(name)
+    if 'breakfast' in name:
+        buffer['breakfast'] = pyexr.read(name)
+    if 'veach-mis' in name:
+        buffer['veach-mis'] = pyexr.read(name)
+    if 'livingroom' in name:
+        buffer['livingroom'] = pyexr.read(name)
+    if 'staircase1' in name:
+        buffer['staircase1'] = pyexr.read(name)
+
+def relativeError(img, ref):
+    return np.sum((img - ref)**2 / (ref + 0.0001)) / (ref.shape[0] * ref.shape[1])
+
+def getReference(name):
+    if 'direct-only' in name or 'defsampling' in name or 'optimalmis' in name or 'ref-di' in name:
+        buffer = refDirect
+    else:
+        buffer = refGlobal
+
+    if 'bathroom' in name:
+        return buffer['bathroom']
+    if 'breakfast' in name:
+        return buffer['breakfast']
+    if 'veach-mis' in name:
+        return buffer['veach-mis']
+    if 'livingroom' in name:
+        return buffer['livingroom']
+    if 'staircase1' in name:
+        return buffer['staircase1']
+
 # convert each file to png
 for f in filenames:
     img = pyexr.read(f)
@@ -49,6 +91,10 @@ for f in filenames:
 
     tmapped = lin_to_srgb(img * pow(2, exposure))
     scipy.misc.toimage(tmapped, cmin=0.0, cmax=1.0).save(fnamePng)
+
+    # compute error across whole image
+    myRef = getReference(f)
+    errorFull = relativeError(img, myRef)
 
     # generate the insets for each file
     left = 0
@@ -69,6 +115,8 @@ for f in filenames:
     tmapped = lin_to_srgb(img[top:top+h,left:left+w,:] * pow(2, exposure))
     scipy.misc.toimage(tmapped, cmin=0.0, cmax=1.0).save(fnameInset1)
 
+    errorInset1 = relativeError(img[top:top+h,left:left+w,:], myRef[top:top+h,left:left+w,:])
+
     # second inset
     if 'bathroom' in f:
         left = 260
@@ -81,3 +129,15 @@ for f in filenames:
 
     tmapped = lin_to_srgb(img[top:top+h,left:left+w,:] * pow(2, exposure))
     scipy.misc.toimage(tmapped, cmin=0.0, cmax=1.0).save(fnameInset2)
+
+    errorInset2 = relativeError(img[top:top+h,left:left+w,:], myRef[top:top+h,left:left+w,:])
+
+    import math
+    roundToN = lambda x, n: 0 if x==0.0 else round(x, -int(math.floor(math.log10(x))) + (n-1))
+
+    errValuesFile = fnamePng.replace('.png', '-error.txt')
+    with open(errValuesFile, 'w') as errFile:
+        errFile.write('relative errors (i - r)^2 / (r^2): \n')
+        errFile.write('full image: ' + str(roundToN(errorFull, 3)) + ' \n')
+        errFile.write('first inset: ' + str(roundToN(errorInset1, 3)) + ' \n')
+        errFile.write('second inset: ' + str(roundToN(errorInset2, 3)) + ' \n')
