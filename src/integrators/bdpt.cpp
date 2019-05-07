@@ -481,14 +481,30 @@ void BDPTIntegrator::Render(const Scene &scene) {
         film->Clear();
     };
 
+    auto t1 = std::chrono::system_clock::now();
+
     // Prepass iteration
-    renderIterFn(1, 0, "Iteration 1", enableRectification, false);
+    const int prepassSamples = 1;
+    renderIterFn(prepassSamples, 0, "Iteration 1", enableRectification, false);
+
+    auto t2 = std::chrono::system_clock::now();
+    int64_t prepassMS = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
 
     if (enableRectification)
         rectifier->Prepare(1, clampThreshold);
 
+    t1 = std::chrono::system_clock::now();
+    int64_t prepareMS = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t2).count();
+
     // Rendering with rectified weights
-    renderIterFn(sampler->samplesPerPixel - 1, 1, "Iterations 2 to " + std::to_string(sampler->samplesPerPixel), false, enableRectification);
+    renderIterFn(sampler->samplesPerPixel - prepassSamples, 1, "Iterations 2 to " + std::to_string(sampler->samplesPerPixel), false, enableRectification);
+
+    t2 = std::chrono::system_clock::now();
+    int64_t renderMS = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+
+    // Print timing statistics
+    std::cout << "Total rendering time: " << Float(prepassMS + prepareMS + renderMS) / 1000.0 << " seconds." << std::endl;
+    std::cout << "Overhead: " << Float(prepareMS) / 1000.0 << " seconds." << std::endl;
 
     // Weight and merge the buffers
     auto &prepass = frameBuffers[0];
@@ -497,8 +513,8 @@ void BDPTIntegrator::Render(const Scene &scene) {
 
     Float invSampleCount = 1.0f / sampler->samplesPerPixel;
 
-    Float weightPrepass = invSampleCount;
-    Float weightRectified =  (sampler->samplesPerPixel - 1) * invSampleCount;
+    Float weightPrepass = prepassSamples * invSampleCount;
+    Float weightRectified =  (sampler->samplesPerPixel - prepassSamples) * invSampleCount;
 
     size_t offset = 0;
     for (Point2i px : film->croppedPixelBounds) {

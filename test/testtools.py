@@ -3,6 +3,7 @@ import os
 import glob
 import subprocess
 from subprocess import Popen, PIPE
+import numpy as np
 
 # generates the string with the selected integrator
 def set_integrator(scene, integrator_str):
@@ -19,13 +20,56 @@ def set_sampler(scene, sampler_str):
     match = re.match(r'(.+%s\s*).+?(\s*%s.+)' % (start, end), scene, re.DOTALL)
     return match.group(1) + replacement + match.group(2)
 
-def run_and_time(args, workingDir):
-    p = Popen(args, cwd=workingDir, stdin=PIPE, stdout=PIPE, stderr=PIPE)
-    output, err = p.communicate()
-    times = re.findall(r'\+\+\]  \((\d+\.\d+)s\)', output.decode('utf-8'))
-    import numpy as np
-    times = np.array(times, dtype=np.float32)
-    return np.sum(times)
+def run_and_time(args, workingDir, repeats=1):
+    totalTime = 0.0
+
+    var = 0.0
+    mean = 0.0
+    n = 0
+
+    for k in range(repeats):
+        p = Popen(args, cwd=workingDir, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+        output, err = p.communicate()
+
+        # Format of our implementation
+        renderTime = re.findall(r'Total rendering time: (\d+\.\d+) seconds.', output.decode('utf-8'))
+        overheadTime = re.findall(r'Overhead: (\d+\.\d+) seconds.', output.decode('utf-8'))
+
+        trialTime = 0.0
+
+        if not renderTime:
+            # Format of the optimal MIS implementation
+            renderTime = re.findall(r'Rendering stats: samples \d+, time (\d+\.\d+) s', output.decode('utf-8'))
+
+            if not renderTime:
+                # Fallback: Hijack PBRT progress reporter
+                # Accuracy below 0.5 seconds!!
+                # Might also be printing the full time multiple times,
+                # the first output is right after Done() was called and should be most accurate
+                times = re.findall(r'\+\+\]  \((\d+\.\d+)s\)', output.decode('utf-8'))
+                times = np.array(times, dtype=np.float32)
+                trialTime = times[0]
+                print("Warning: time measurement fallback option triggered, accuracy < 0.5s!")
+            else:
+                trialTime = float(renderTime[0])
+        else:
+            trialTime = float(renderTime[0])
+
+        n += 1
+        if n == 1:
+            mean = trialTime
+        else:
+            newMean = mean + (trialTime - mean) / n
+            var += (trialTime - mean) * (trialTime - newMean)
+            mean = newMean
+
+    if n > 1:
+        var /= n-1
+    twoStandardDevs = np.sqrt(var) * 2
+
+    import math
+    roundToN = lambda x, n: round(x, -int(math.floor(math.log10(x))) + (n-1))
+    return (roundToN(mean, 3), 0.0 if repeats == 1 else roundToN(twoStandardDevs, 3))
 
 def run_tests(ref_name, ref_integrator, ref_sampler, tester_fn, scenes):
     filenames = []
@@ -53,6 +97,14 @@ def run_tests(ref_name, ref_integrator, ref_sampler, tester_fn, scenes):
     return filenames
 
 def show_results(filenames):
+    # separate out the stratification factors
+    factorImages = []
+    for name in filenames:
+        if 'stratfactor-d' in name:
+            factorImages.append(name)
+    for name in factorImages:
+        filenames.remove(name)
+
     # open all images, assumes tev is in the path
     try:
         viewer = ['tev']
@@ -62,4 +114,7 @@ def show_results(filenames):
         # tev was not found. Maybe we are on WSL and tev is a Windows .exe?
         viewer = ['tev.exe']
         viewer += filenames
-        subprocess.call(viewer)
+        try:
+            subprocess.call(viewer)
+        except:
+            print('"tev" not found in path, proceeding without showing images')

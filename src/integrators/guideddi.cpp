@@ -18,15 +18,22 @@ void GuidedDirectIllum::Render(const Scene &scene) {
     // Determine the number of iterations based on the number of samples per pixel.
     numIterations = sampler->samplesPerPixel;
 
-    ProgressReporter reporter(numIterations, "Rendering");
-    for (int iter = 0; iter < numIterations; ++iter) {
-        currentIteration = iter; // TODO remove this from the parameters of the following functions
-        PrepareIteration(scene, iter);
-        RenderIteration(scene, iter);
-        ProcessIteration(scene, iter);
-        reporter.Update();
-    }
-    reporter.Done();
+    {
+        ProgressReporter reporter(numIterations, "Rendering");
+        auto t1 = std::chrono::system_clock::now();
+        for (int iter = 0; iter < numIterations; ++iter) {
+            currentIteration = iter; // TODO remove this from the parameters of the following functions
+            PrepareIteration(scene, iter);
+            RenderIteration(scene, iter);
+            ProcessIteration(scene, iter);
+            reporter.Update();
+        }
+        auto t2 = std::chrono::system_clock::now();
+        int64_t renderMS = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+        std::cout << "Total rendering time: " << Float(renderMS) / 1000.0 << " seconds." << std::endl;
+        reporter.Done();
+    } // Ensure that the ProgressReporter goes out of scope, image I/O is not considered part of the rendering time
+
     WriteFinalImage();
 
     if (ourMode != OUR_DISABLED && visWeights)

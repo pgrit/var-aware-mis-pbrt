@@ -6,10 +6,17 @@ from testtools import *
 experiment_sampler = 'Sampler "random" "integer pixelsamples" 8'
 reference_sampler = 'Sampler "random" "integer pixelsamples" 1024'
 
-di_integrator = 'Integrator "guideddi" ' + ' "integer downsamplingfactor" 8 ' ' "float weightthreshold" 16 ' + ' "bool visualizefactors" "true" '
+benchmarkRepeats = 1
+
+di_integrator = 'Integrator "guideddi" ' + ' "integer downsamplingfactor" 8 ' ' "float weightthreshold" 16 '
+di_integrator += ' "bool visualizefactors" "true" '
 
 optimal_mis_direct = """Integrator "optmis" "integer seedoffset" 0 "string technique" "L" "string lselect" "EU" "string lsat" "P"
 "string misweights" "optimal" "string optimalmode" "alphasum" "string lproject" "none" "string gproject" "sphereprecise" "integer trainsamples" 0
+"bool moredatalayers" "false" "integer updatestep" 1 "integer targettime" [-1]"""
+
+optimal_mis_balance = """Integrator "optmis" "integer seedoffset" 0 "string technique" "L" "string lselect" "EU" "string lsat" "P"
+"string misweights" "balance" "string optimalmode" "alphasum" "string lproject" "none" "string gproject" "sphereprecise" "integer trainsamples" 0
 "bool moredatalayers" "false" "integer updatestep" 1 "integer targettime" [-1]"""
 
 optimal_mis_ideal = """Integrator "optmis" "integer seedoffset" 0 "string technique" "L" "string lselect" "EU" "string lsat" "P"
@@ -21,22 +28,26 @@ optimal_mis_executable = '../../optimalmis/src/pbrt/build/pbrt'
 consider_optimal = True
 
 scenes = {
+    # 'veach-mis' : {
+    #     'path': '../../pbrt-v3-scenes/veach-mis/',
+    #     'template': 'template.pbrt'
+    # },
     'staircase1' : {
         'path': '../../pbrt-v3-scenes/staircase1/',
         'template': 'template.pbrt'
     },
-    # 'breakfast' : {
-    #     'path': '../../pbrt-v3-scenes/breakfast/',
-    #     'template': 'template.pbrt'
-    # },
-    # 'livingroom' : {
-    #     'path': '../../pbrt-v3-scenes/white-room/',
-    #     'template': 'template.pbrt'
-    # },
-    # 'bathroom' : {
-    #     'path': '../../pbrt-v3-scenes/bathroom/',
-    #     'template': 'template.pbrt'
-    # }
+    'breakfast' : {
+        'path': '../../pbrt-v3-scenes/breakfast/',
+        'template': 'template.pbrt'
+    },
+    'livingroom' : {
+        'path': '../../pbrt-v3-scenes/white-room/',
+        'template': 'template.pbrt'
+    },
+    'bathroom' : {
+        'path': '../../pbrt-v3-scenes/bathroom/',
+        'template': 'template.pbrt'
+    }
 }
 
 moment = ' "string varmode" "moment" '
@@ -51,20 +62,23 @@ nouniform = ' "bool enableuniform" "false" '
 
 # different integrator configurations to test
 variants = {
-    # 'nobsdf-balance': balance + vanilla + nobsdf,
-    'nobsdf-power': power + vanilla + nobsdf,
-    # 'nobsdf-nomis': nomis + vanilla + nobsdf,
+    'balance': balance + vanilla + nobsdf,
+    'power': power + vanilla + nobsdf,
+    'nomis': nomis + vanilla + nobsdf,
     # 'nobsdf-recipvar': balance + variance + nobsdf,
-    # 'nobsdf-moment': balance + moment + nobsdf,
-    # 'nobsdf-recipvar-only': nomis + variance + nobsdf,
+    'our-balance': balance + moment + nobsdf,
+    'recipvar-only': nomis + variance + nobsdf,
     # 'nobsdf-moment-only': nomis + moment + nobsdf,
     # 'nobsdf-recipvar-power': power + variance + nobsdf,
-    'nobsdf-moment-power': power + moment + nobsdf,
+    'our-power': power + moment + nobsdf,
     # 'noguided-power': power + vanilla + noguided,
     # 'noguided-moment-power': power + moment + noguided,
 }
 
 def di_tester(scene_name, scene, scene_path):
+    print('Testing: ' + scene_name)
+    print('==============================')
+
     filenames = []
     for vname, vparams in variants.items():
         workingDir = './' + scene_name + '/' + vname
@@ -80,8 +94,8 @@ def di_tester(scene_name, scene, scene_path):
         with open(scene_path + 'scene.pbrtgen', 'w') as f:
             f.write(sc)
 
-        time = run_and_time(['../../pbrt', '../../' + scene_path + 'scene.pbrtgen', '--outfile', 'img.exr'], workingDir)
-        print('time for ' + vname + ': ' + str(time))
+        time = run_and_time(['../../pbrt', '../../' + scene_path + 'scene.pbrtgen', '--outfile', 'img.exr'], workingDir, repeats=benchmarkRepeats)
+        print('time for ' + vname + ': ' + str(time[0]) + ' s (+- ' + str(time[1]) + ' s)')
 
         imgs = glob.glob(workingDir + '/' + '*.exr')
         filenames.extend(imgs)
@@ -101,8 +115,17 @@ def di_tester(scene_name, scene, scene_path):
         sc = set_sampler(sc, experiment_sampler)
         with open(scene_path + 'scene.pbrtgen', 'w') as f:
             f.write(sc)
-        time = run_and_time(['../../' + optimal_mis_executable, '../../' + scene_path + 'scene.pbrtgen', '--outfile', 'direct.exr'], workingDir)
-        print('time for optimal (direct): ' + str(time))
+        time = run_and_time(['../../' + optimal_mis_executable, '../../' + scene_path + 'scene.pbrtgen', '--outfile', 'direct.exr'], workingDir, repeats=benchmarkRepeats)
+        print('time for optimal (direct): ' + str(time[0]) + ' s (+- ' + str(time[1]) + ' s)')
+
+        # render with their balance estimator (for baseline equalization)
+        sc = set_integrator(scene, optimal_mis_balance)
+        sc = set_sampler(sc, experiment_sampler)
+        with open(scene_path + 'scene.pbrtgen', 'w') as f:
+            f.write(sc)
+        time = run_and_time(['../../' + optimal_mis_executable, '../../' + scene_path + 'scene.pbrtgen', '--outfile', 'balance.exr'], workingDir, repeats=benchmarkRepeats)
+        print('time for optimal (balance): ' + str(time[0]) + ' s (+- ' + str(time[1]) + ' s)')
+
 
         # render with the ideal optimal weights
         # sc = set_integrator(scene, optimal_mis_ideal)
@@ -114,7 +137,11 @@ def di_tester(scene_name, scene, scene_path):
         imgs = glob.glob(workingDir + '/' + '*.exr')
         filenames.extend(imgs)
 
+    print('==============================')
+
     return filenames
 
 filenames = run_tests('ref-di.exr', di_integrator, reference_sampler, di_tester, scenes)
-show_results(filenames)
+
+# use this to open all results right away
+# show_results(filenames)
