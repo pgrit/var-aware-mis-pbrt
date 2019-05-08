@@ -104,11 +104,32 @@ for f in filenames:
 
     # first inset
     if 'bathroom' in f:
-        left = 600
-        top = 110
+        left = 570
+        top = 130
         w = 100
         h = 100
         exposure = -1.0
+    elif 'breakfast' in f:
+        left = 470
+        top = 430
+        w = 100
+        h = 100
+    elif 'livingroom' in f:
+        left = 360
+        top = 0
+        h = 100
+        w = 100
+    elif 'veach-mis' in f:
+        left = 560
+        top = 170
+        w = 100
+        h = 100
+    elif 'staircase1' in f:
+        left = 280
+        top = 100
+        w = 100
+        h = 100
+        exposure = 1.0
 
     fnameInset1 = fnamePng.replace('.png', '-inset1.png')
 
@@ -124,6 +145,28 @@ for f in filenames:
         w = 100
         h = 100
         exposure = 0.0
+    elif 'breakfast' in f:
+        left = 880
+        top = 500
+        w = 100
+        h = 100
+    elif 'livingroom' in f:
+        left = 920
+        top = 40
+        h = 100
+        w = 100
+    elif 'veach-mis' in f:
+        left = 600
+        top = 280
+        w = 100
+        h = 100
+        exposure = -5.5
+    elif 'staircase1' in f:
+        left = 210
+        top = 1150
+        w = 100
+        h = 100
+        exposure = 2.0
 
     fnameInset2 = fnamePng.replace('.png', '-inset2.png')
 
