@@ -8,6 +8,7 @@ from glob import glob
 import pyexr
 import numpy as np
 import scipy.misc
+import matplotlib.pyplot as plt
 
 def lin_to_srgb(rgba):
     """
@@ -33,6 +34,12 @@ for name in filenames:
         factorImages.append(name)
 for name in factorImages:
     filenames.remove(name)
+
+# convert the factor images to false-color pngs
+for f in factorImages:
+    img = pyexr.read(f)
+    fnamePng = f.replace('.exr', '.png')
+    plt.imsave(fnamePng, img[:,:,0], vmin=1, vmax=10)
 
 # separate the reference images for error computation
 refGlobal = {}
