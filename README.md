@@ -4,7 +4,7 @@ Variance-aware MIS weights in PBRTv3
 This repository implements the approach discussed in the
 "Variance-Aware Multiple Importance Sampling" paper.
 
-The core of the implementation is in `src/integrators/samis.h` and `src/integrators/samis.cpp`:
+The core of the implementation is in `src/util/samis.h` and `src/util/samis.cpp`:
 The class `SAMISRectifier` implements the rectification as a black box: given the outcome of paths
 sampled from the first iteration, it computes the required variance estimates and the resulting factors.
 

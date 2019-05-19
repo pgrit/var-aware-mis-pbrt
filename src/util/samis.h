@@ -12,6 +12,8 @@
 #include "parallel.h"
 #include "film.h"
 
+#include "atomicimg.h"
+
 namespace pbrt {
 
 // Manages the stratification factor estimates for the techniques of a bidirectional path tracer
@@ -58,28 +60,6 @@ private:
     const bool considerMis;
 
     ComputeFactorFn computeFactor;
-
-    // A datatype that allows copying std::atomic
-    // The copy procedure itself is not atomic
-    template <typename T>
-    struct CopyableAtomic : public std::atomic<T> {
-        CopyableAtomic() { }
-        CopyableAtomic(T v) { this->store(v); }
-        CopyableAtomic& operator= (const CopyableAtomic& a) { this->store(a.load()); return *this; }
-        CopyableAtomic(const CopyableAtomic& a) { this->store(a.load()); }
-        CopyableAtomic& operator= (T i) { this->store(i); return *this; }
-    };
-
-    template <typename T>
-    static T AtomicAdd(std::atomic<T>& a, T b) {
-        T old_val = a.load();
-        T desired_val = old_val + b;
-        while(!a.compare_exchange_weak(old_val, desired_val))
-            desired_val = old_val + b;
-        return desired_val;
-    }
-
-    using AtomicImage = std::vector<CopyableAtomic<float>>;
 
     std::vector<std::vector<AtomicImage>> techImages;
     std::vector<std::vector<std::vector<float>>> stratFactors;

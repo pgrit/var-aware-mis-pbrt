@@ -41,6 +41,7 @@
 #include "sampler.h"
 #include "stats.h"
 #include "imageio.h"
+#include "util/varestim.h"
 
 namespace pbrt {
 
@@ -314,8 +315,11 @@ Float MISWeight(const Scene &scene, Vertex *lightVertices,
 
 // BDPT Method Definitions
 inline int BufferIndex(int s, int t) {
-    int above = s + t - 2;
-    return s + above * (5 + above) / 2;
+    // int above = s + t - 2;
+    // return s + above * (5 + above) / 2;
+
+    return s+t-2 + t;
+    // return 0;
 }
 
 /// Returns the initializer for the FNV hash function
@@ -359,6 +363,15 @@ void BDPTIntegrator::Render(const Scene &scene) {
     // Used to re-weight and combine the prepass with the following iterations.
     std::vector<std::vector<Float>> frameBuffers;
 
+    // Only used to compute reference variances
+    std::vector<std::unique_ptr<VarianceEstimator>> varianceEstimators;
+    if (estimateVariances) {
+        for (int d = 0; d <= maxDepth; ++d) {
+            for (int t = 1; t <= d+2; ++t)
+                varianceEstimators.emplace_back(new VarianceEstimator(film));
+        }
+    }
+
     // Configure the rectifier
     std::unique_ptr<SAMISRectifier> rectifier;
     bool enableRectification = misMod != MIS_MOD_NONE;
@@ -384,7 +397,7 @@ void BDPTIntegrator::Render(const Scene &scene) {
     // The resulting images are averaged, except for those pixels where the stratification factors are very large.
     // To minimize change to the exisiting code base, the render loop is encapuslated in a lambda function.
     auto renderIterFn = [&](int sampleCount, int sampleOffset, const std::string &iterName,
-                            bool estimateVariances, bool rectify) {
+                            bool estimateFactors, bool rectify) {
         ProgressReporter reporter(nXTiles * nYTiles, iterName);
 
         if (scene.lights.size() > 0) {
@@ -458,9 +471,14 @@ void BDPTIntegrator::Render(const Scene &scene) {
                                     film->AddSplat(pFilmNew, Lpath);
 
                                 // for Stratification-Aware MIS: log the contribution
-                                if (estimateVariances) {
+                                if (estimateFactors) {
                                     auto unweighted = (misWeight == 0 || Lpath == 0) ? 0 : (Lpath / misWeight);
                                     rectifier->AddEstimate(pFilmNew, s+t, t, unweighted, Lpath);
+                                }
+
+                                if (estimateVariances) {
+                                    auto unweighted = (misWeight == 0 || Lpath == 0) ? 0 : (Lpath / misWeight);
+                                    varianceEstimators[BufferIndex(s,t)]->AddEstimate(pFilmNew, unweighted);
                                 }
                             }
                         }
@@ -484,7 +502,6 @@ void BDPTIntegrator::Render(const Scene &scene) {
     auto t1 = std::chrono::system_clock::now();
 
     // Prepass iteration
-    const int prepassSamples = 1;
     renderIterFn(prepassSamples, 0, "Iteration 1", enableRectification, false);
 
     auto t2 = std::chrono::system_clock::now();
@@ -532,8 +549,18 @@ void BDPTIntegrator::Render(const Scene &scene) {
 
     pbrt::WriteImage(film->filename, out.data(), film->croppedPixelBounds, film->fullResolution);
 
-    if (visualizeFactors)
+    if (visualizeFactors && enableRectification)
         rectifier->WriteImages();
+
+    if (estimateVariances) {
+        int idx = 0;
+        for (int d = 0; d <= maxDepth; ++d) {
+            for (int t = 1; t <= d+2; ++t) {
+                varianceEstimators[idx++]->WriteToFile(StringPrintf("variance-d%d-t%d.exr",d,t), sampler->samplesPerPixel, t==1, false);
+                varianceEstimators[idx-1]->WriteToFile(StringPrintf("factor-d%d-t%d.exr",d,t), sampler->samplesPerPixel, t==1, true);
+            }
+        }
+    }
 }
 
 Spectrum ConnectBDPT(
@@ -685,11 +712,14 @@ BDPTIntegrator *CreateBDPTIntegrator(const ParamSet &params,
     int downsamplingFactor = params.FindOneInt("downsamplingfactor", 8);
     bool visualizeFactors = params.FindOneBool("visualizefactors", true);
     Float clampThreshold = params.FindOneFloat("clampthreshold", 16);
+    int prepassSamples = params.FindOneInt("presamples", 1);
+    bool estimateVariances = params.FindOneBool("estimatevariances", false);
 
     return new BDPTIntegrator(sampler, camera, maxDepth, false,
                               false, pixelBounds, lightStrategy,
                               misStrategy, misMod, rectiMinDepth, rectiMaxDepth,
-                              downsamplingFactor, visualizeFactors, clampThreshold);
+                              downsamplingFactor, visualizeFactors, clampThreshold,
+                              prepassSamples, estimateVariances);
 }
 
 }  // namespace pbrt

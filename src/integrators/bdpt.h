@@ -155,7 +155,9 @@ class BDPTIntegrator : public Integrator {
                    int rectiMaxDepth = 1,
                    int downsamplingFactor = 8,
                    bool visualizeFactors = true,
-                   Float clampThreshold = 16)
+                   Float clampThreshold = 16,
+                   int prepassSamples = 1,
+                   bool estimateVariances = false)
         : sampler(sampler),
           camera(camera),
           maxDepth(maxDepth),
@@ -169,7 +171,9 @@ class BDPTIntegrator : public Integrator {
           rectiMaxDepth(rectiMaxDepth+2),
           downsamplingFactor(downsamplingFactor),
           visualizeFactors(visualizeFactors),
-          clampThreshold(clampThreshold)
+          clampThreshold(clampThreshold),
+          prepassSamples(prepassSamples),
+          estimateVariances(estimateVariances)
         {}
 
     void Render(const Scene &scene);
@@ -190,6 +194,8 @@ class BDPTIntegrator : public Integrator {
     const int downsamplingFactor;
     const bool visualizeFactors;
     const Float clampThreshold;
+    const int prepassSamples;
+    const bool estimateVariances;
 };
 
 struct Vertex {
