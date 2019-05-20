@@ -389,8 +389,10 @@ void BDPTIntegrator::Render(const Scene &scene) {
             }
         };
 
-    if (enableRectification)
-        rectifier.reset(new SAMISRectifier(film, rectiMinDepth, rectiMaxDepth, downsamplingFactor, false, factorScheme));
+    if (enableRectification || useReferenceVariances)
+        rectifier.reset(new SAMISRectifier(film, rectiMinDepth, rectiMaxDepth,
+            useReferenceVariances ? 1 : downsamplingFactor,
+            false, factorScheme, useReferenceVariances, misMod == MIS_MOD_RECIPROCAL_VARIANCE));
 
     // For Stratification-Aware MIS: the render loop is separated into two iterations.
     // The first uses the balance heuristic and estimates the stratification factors.
@@ -502,7 +504,7 @@ void BDPTIntegrator::Render(const Scene &scene) {
     auto t1 = std::chrono::system_clock::now();
 
     // Prepass iteration
-    renderIterFn(prepassSamples, 0, "Iteration 1", enableRectification, false);
+    renderIterFn(prepassSamples, 0, "Iteration 1", enableRectification, useReferenceVariances);
 
     auto t2 = std::chrono::system_clock::now();
     int64_t prepassMS = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
@@ -514,7 +516,8 @@ void BDPTIntegrator::Render(const Scene &scene) {
     int64_t prepareMS = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t2).count();
 
     // Rendering with rectified weights
-    renderIterFn(sampler->samplesPerPixel - prepassSamples, 1, "Iterations 2 to " + std::to_string(sampler->samplesPerPixel), false, enableRectification);
+    renderIterFn(sampler->samplesPerPixel - prepassSamples, 1, "Iterations 2 to " + std::to_string(sampler->samplesPerPixel),
+                 false, enableRectification || useReferenceVariances);
 
     t2 = std::chrono::system_clock::now();
     int64_t renderMS = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
@@ -714,12 +717,13 @@ BDPTIntegrator *CreateBDPTIntegrator(const ParamSet &params,
     Float clampThreshold = params.FindOneFloat("clampthreshold", 16);
     int prepassSamples = params.FindOneInt("presamples", 1);
     bool estimateVariances = params.FindOneBool("estimatevariances", false);
+    bool useReferenceVariances = params.FindOneBool("userefvars", false);
 
     return new BDPTIntegrator(sampler, camera, maxDepth, false,
                               false, pixelBounds, lightStrategy,
                               misStrategy, misMod, rectiMinDepth, rectiMaxDepth,
                               downsamplingFactor, visualizeFactors, clampThreshold,
-                              prepassSamples, estimateVariances);
+                              prepassSamples, estimateVariances, useReferenceVariances);
 }
 
 }  // namespace pbrt

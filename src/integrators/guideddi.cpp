@@ -53,7 +53,7 @@ void GuidedDirectIllum::SetUp(const Scene &scene) {
                     return ourMode == OUR_VARIANCE ? (1 / var) : (1 + mean * mean / var);
                 else
                     return Float(1);
-            }));
+            }, false, false));
 }
 
 void GuidedDirectIllum::PrepareIteration(const Scene &scene, const int iter) {

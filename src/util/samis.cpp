@@ -4,7 +4,7 @@
 namespace pbrt {
 
 SAMISRectifier::SAMISRectifier(const Film *film, int minDepth, int maxDepth, int downsamplingFactor,
-                               bool considerMis, const ComputeFactorFn& computeFactor)
+                               bool considerMis, const ComputeFactorFn& computeFactor, bool loadRefs, bool loadVariance)
 : film(film), minDepth(minDepth), maxDepth(maxDepth), downsamplingFactor(downsamplingFactor)
 , width(film->croppedPixelBounds.Diagonal().x), height(film->croppedPixelBounds.Diagonal().y)
 , reducedWidth(width / downsamplingFactor), reducedHeight(height / downsamplingFactor)
@@ -16,6 +16,23 @@ SAMISRectifier::SAMISRectifier(const Film *film, int minDepth, int maxDepth, int
     for (int d = minDepth; d <= maxDepth; ++d) {
         // depth is in number of vertices, which is the number of techniques in BDPT
         techImages.emplace_back(d, AtomicImage(numPixels, 0.0f));
+    }
+
+    // TODO hacky...
+    if (loadRefs) {
+        for (int d = minDepth; d <= maxDepth; ++d) {
+            stratFactors.emplace_back(d, std::vector<float>(width * height, 0.0f));
+            for (int t = 1; t <= d; ++t) {
+                Point2i res;
+                std::string filename = loadVariance ? StringPrintf("variance-d%d-t%d.exr",d,t) : StringPrintf("factor-d%d-t%d.exr",d,t);
+                std::unique_ptr<RGBSpectrum[]> img(ReadImageEXR(filename,&res.x, &res.y));
+                for (int y = 0; y < res.y; ++y) for (int x = 0; x < res.x; ++x) {
+                    Float val = img[y * res.x + x][0];
+                    if (loadVariance) val = 1.0 / val;
+                    stratFactors[d-minDepth][t-1][y * res.x + x] = val;
+                }
+            }
+        }
     }
 }
 

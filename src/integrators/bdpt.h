@@ -157,7 +157,8 @@ class BDPTIntegrator : public Integrator {
                    bool visualizeFactors = true,
                    Float clampThreshold = 16,
                    int prepassSamples = 1,
-                   bool estimateVariances = false)
+                   bool estimateVariances = false,
+                   bool useReferenceVariances = false)
         : sampler(sampler),
           camera(camera),
           maxDepth(maxDepth),
@@ -173,7 +174,8 @@ class BDPTIntegrator : public Integrator {
           visualizeFactors(visualizeFactors),
           clampThreshold(clampThreshold),
           prepassSamples(prepassSamples),
-          estimateVariances(estimateVariances)
+          estimateVariances(estimateVariances),
+          useReferenceVariances(useReferenceVariances)
         {}
 
     void Render(const Scene &scene);
@@ -196,6 +198,7 @@ class BDPTIntegrator : public Integrator {
     const Float clampThreshold;
     const int prepassSamples;
     const bool estimateVariances;
+    const bool useReferenceVariances;
 };
 
 struct Vertex {

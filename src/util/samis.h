@@ -30,7 +30,7 @@ public:
     // TODO / REFACTOR instead of film, pass width and height. Instead of min and maxDepth, pass number of techniques
     // bdpt will then create multiple rectifier objects, one for each path length
     SAMISRectifier(const Film *film, int minDepth, int maxDepth, int downsamplingFactor,
-                   bool considerMis, const ComputeFactorFn& computeFactor);
+                   bool considerMis, const ComputeFactorFn& computeFactor, bool loadRefs, bool loadVariance);
 
     void AddEstimate(const Point2f& pixel, int pathLen, int technique,
                      const Spectrum &unweightedEstimate, const Spectrum &weightedEstimate);
