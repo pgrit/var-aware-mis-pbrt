@@ -24,11 +24,15 @@ SAMISRectifier::SAMISRectifier(const Film *film, int minDepth, int maxDepth, int
             stratFactors.emplace_back(d, std::vector<float>(width * height, 0.0f));
             for (int t = 1; t <= d; ++t) {
                 Point2i res;
-                std::string filename = loadVariance ? StringPrintf("variance-d%d-t%d.exr",d,t) : StringPrintf("factor-d%d-t%d.exr",d,t);
+                std::string filename = loadVariance ? StringPrintf("variance-d%d-t%d.exr",d-2,t) : StringPrintf("factor-d%d-t%d.exr",d-2,t);
                 std::unique_ptr<RGBSpectrum[]> img(ReadImageEXR(filename,&res.x, &res.y));
                 for (int y = 0; y < res.y; ++y) for (int x = 0; x < res.x; ++x) {
                     Float val = img[y * res.x + x][0];
-                    if (loadVariance) val = 1.0 / val;
+                    if (loadVariance) {
+                        val = val == 0.0 ? 1.0 : (1.0 / val);
+                        if (std::isinf(val) || std::isnan(val) || val < 0.0)
+                            val = 1.0;
+                    }
                     stratFactors[d-minDepth][t-1][y * res.x + x] = val;
                 }
             }

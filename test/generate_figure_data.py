@@ -30,7 +30,7 @@ for dir,_,_ in os.walk(start_dir):
 # remove the stratification factor files form the list
 factorImages = []
 for name in filenames:
-    if 'stratfactor-d' in name:
+    if 'stratfactor-d' in name or 'factor-d' in name or 'variance-d' in name:
         factorImages.append(name)
 for name in factorImages:
     filenames.remove(name)
@@ -64,6 +64,7 @@ for name in filenames:
         buffer['staircase1'] = pyexr.read(name)
 
 def relativeError(img, ref):
+    img[img < 0] = 0.0
     return np.sum((img - ref)**2 / (ref + 0.0001)) / (ref.shape[0] * ref.shape[1])
 
 def getReference(name):
@@ -101,6 +102,9 @@ for f in filenames:
 
     # compute error across whole image
     myRef = getReference(f)
+
+    if img is None or myRef is None:
+        print(f)
     errorFull = relativeError(img, myRef)
 
     # generate the insets for each file

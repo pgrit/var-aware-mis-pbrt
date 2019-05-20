@@ -374,7 +374,7 @@ void BDPTIntegrator::Render(const Scene &scene) {
 
     // Configure the rectifier
     std::unique_ptr<SAMISRectifier> rectifier;
-    bool enableRectification = misMod != MIS_MOD_NONE;
+    bool enableRectification = misMod != MIS_MOD_NONE && !useReferenceVariances;
     SAMISRectifier::ComputeFactorFn factorScheme = [&](int d, int t, Float var, Float mean) {
             if (misMod == MIS_MOD_NONE)
                 return Float(1);
