@@ -28,7 +28,7 @@ void VarianceEstimator::WriteToFile(const std::string& filename, int numSamples,
             // Because of design decisions in PBRT, the light tracer estimates already contain a division by the
             // number of samples (= number of pixels)
             // In order to compute the correct variance estimate, this needs to be accounted for!
-            moment *= width * height;
+            meansqr /= Float(width * height);
         }
 
         Float var = moment - meansqr;

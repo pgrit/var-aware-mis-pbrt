@@ -556,8 +556,9 @@ void BDPTIntegrator::Render(const Scene &scene) {
         int idx = 0;
         for (int d = 0; d <= maxDepth; ++d) {
             for (int t = 1; t <= d+2; ++t) {
-                varianceEstimators[idx++]->WriteToFile(StringPrintf("variance-d%d-t%d.exr",d,t), sampler->samplesPerPixel, t==1, false);
-                varianceEstimators[idx-1]->WriteToFile(StringPrintf("factor-d%d-t%d.exr",d,t), sampler->samplesPerPixel, t==1, true);
+                varianceEstimators[idx]->WriteToFile(StringPrintf("variance-d%d-t%d.exr",d,t), sampler->samplesPerPixel, t==1, false);
+                varianceEstimators[idx]->WriteToFile(StringPrintf("factor-d%d-t%d.exr",d,t), sampler->samplesPerPixel, t==1, true);
+                idx++;
             }
         }
     }
